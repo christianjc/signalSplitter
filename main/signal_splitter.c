@@ -17,6 +17,7 @@
 // Task handles
 static TaskHandle_t xTaskAdvanceFrameHandle = NULL;
 static TaskHandle_t xTaskButtonCaptureHandle = NULL;
+static QueueHandle_t xAdvanceFrameQueue = NULL;
 
 // Iterrupt handlers
 static void IRAM_ATTR isr_signal_handler(void *arg);
@@ -31,6 +32,14 @@ void app_main(void)
 
     // Set the LEDC peripheral configuration
     gpio_init();
+
+    // Create Queue handle
+    xAdvanceFrameQueue = xQueueCreate(10, sizeof(uint32_t));
+
+    if (xAdvanceFrameQueue == NULL)
+    {
+        printf("[ERROR]: Could not be create queue");
+    }
 
     //start gpio task
     xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 11, &xTaskAdvanceFrameHandle);
@@ -273,52 +282,58 @@ static void advance_frame_task(void)
     /* Reciving notifications:
          * PROJECTOR SIGNAL:        SIGNAL_ISR = 0X01
          * ADVANCE FRAME BUTTON:    ADV_FRAME = 0x02
+         * TIME INTERRUPT
     */
 
     uint32_t ulInterruptStatus = 0x00;
     uint32_t current_frame = 0x03;
-    float interrupt_time = 0.0f;
+    uint64_t timer_val = 0;
 
-    const float target_time = (1.0 / 180.0) f;   // set the frame with to (1/180) seconds
-    float error = -target_time;                  // this variable will hold the error from the interupt
-    float allowed_error = (target_time * 0.1) f; // set allowed error to 10%
+    const uint64_t target_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
+    const uint64_t allowed_error = (target_time * 0.1); // set allowed error to 10%
+    int64_t error = -target_time;                       // this variable will hold the error from the interupt
 
     // start the clock timer interrupt
+    // set timer to reset every 5655 to 5755 cycles
 
     for (;;)
     {
-        xTaskNotifyWait(0x00,               /* Don't clear any bits on entry. */
-                        ULONG_MAX,          /* Clear all bits on exit. ULONG_MAX will clear all bits on exit */
-                        &ulInterruptStatus, /* Receives the notification value. */
-                        portMAX_DELAY);     /* Block indefinitely. */
-
-        if (ulInterruptStatus & 0x01)
+        if (xAdvanceFrameQueue != NULL)
         {
-            // get clock time from timer
-            // interrupt_time = get_timer()
-            if (abs(target_time - interrupt_time) < abs(error))
+            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, portMAX_DELAY))
             {
-                error = interrupt_time - target_time;
-
-                if (abs(error) < allowed_error)
+                if (ulInterruptStatus & 0x01)
                 {
-                    // reset interrupt timer
-                    //
+                    // get clock time from timer
+                    // interrupt_time = get_timer()
+                    if (time_val < allowed_error || timer_val > (target_time - allowed_error))
+                    {
+                        error = timer_val - target_time;
 
-                    current_frame = current_frame % 3;
-                    current_frame++;
+                        if (abs(error) < allowed_error)
+                        {
+                            // reset interrupt timer
+                            //
+
+                            current_frame = current_frame % 3;
+                            current_frame++;
+                        }
+                    }
+                    else if ()
+                    {
+                    }
+                }
+                else if (ulInterruptStatus & 0x02)
+                {
+                }
+                else if (ulInterruptStatus & 0x04)
+                {
+                }
+                else
+                {
+                    printf("[ERROR]: There was an error in advance_frame_task() function");
                 }
             }
-            else if ()
-            {
-            }
-        }
-        else if (ulInterruptStatus & 0x02)
-        {
-        }
-        else
-        {
-            printf("[ERROR]: There was an error in advance_frame_task() function");
         }
     }
 }
