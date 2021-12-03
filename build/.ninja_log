@@ -1208,3 +1208,7 @@
 1788	2325	1637034973297828552	signalSplitter.elf	bd71bbe2d63f53f9
 2325	2514	1637034973507268221	.bin_timestamp	804dd2335f55ca04
 2514	15224	0	CMakeFiles/flash	e7c352f48606da8c
+51	89	1636766993212591101	bootloader-prefix/src/bootloader-stamp/bootloader-build	6fe22f9a53cc8f0b
+51	89	1636766993212591101	bootloader/bootloader.elf	6fe22f9a53cc8f0b
+51	89	1636766993212591101	bootloader/bootloader.bin	6fe22f9a53cc8f0b
+51	89	1636766993212591101	bootloader/bootloader.map	6fe22f9a53cc8f0b

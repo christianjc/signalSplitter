@@ -16,8 +16,7 @@
 #include "driver/timer.h"
 
 // Task handles
-static TaskHandle_t xTaskAdvanceFrameHandle = NULL;
-static TaskHandle_t xTaskButtonCaptureHandle = NULL;
+static QueueHandle_t xButtonCaptureQueue = NULL;
 static QueueHandle_t xAdvanceFrameQueue = NULL;
 
 // Iterrupt handlers
@@ -36,15 +35,16 @@ void app_main(void)
 
     // Create Queue handle
     xAdvanceFrameQueue = xQueueCreate(10, sizeof(uint32_t));
+    xButtonCaptureQueue = xQueueCreate(10, sizeof(uint32_t));
 
-    if (xAdvanceFrameQueue == NULL)
+    if (xAdvanceFrameQueue == NULL || xButtonCaptureQueue == NULL)
     {
         printf("[ERROR]: Could not be create queue");
     }
 
     //start gpio task
-    xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 11, &xTaskAdvanceFrameHandle);
-    xTaskCreate(button_capture_task, "button_capture_task", 2048 * 2, NULL, 10, &xTaskButtonCaptureHandle);
+    xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 11, NULL);
+    xTaskCreate(button_capture_task, "button_capture_task", 2048 * 2, NULL, 10, NULL);
     xTaskCreate(adc_pwm_task, "adc_pwm_task", 2048 * 2, NULL, 9, NULL);
 
     //install gpio isr service
@@ -77,8 +77,8 @@ void app_main(void)
 static void IRAM_ATTR isr_signal_handler(void *arg)
 {
     BaseType_t xHigherPriorityTaskWoken;
-    uint32_t sig_msg = 0x01;
     xHigherPriorityTaskWoken = pdFALSE;
+    uint32_t sig_msg = 0x01;
 
     xQueueSendFromISR(xAdvanceFrameQueue, sig_msg, xHigherPriorityTaskWoken);
 
@@ -99,10 +99,7 @@ static void IRAM_ATTR isr_advance_frame_handler(void *arg)
     BaseType_t xHigherPriorityTaskWoken;
     xHigherPriorityTaskWoken = pdFALSE;
 
-    xTaskNotifyFromISR(xTaskButtonCaptureHandle,
-                       0x01,
-                       eSetBits,
-                       &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, (uint32_t)0x01, xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -121,10 +118,7 @@ static void IRAM_ATTR isr_signal_mode_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x02;
 
-    xTaskNotifyFromISR(xTaskButtonCaptureHandle,   /* Pointer to task handle to notify */
-                       buttonPressed,              /* Value to update Notification */
-                       eSetBits,                   /* Action: eSetBits -> set bits */
-                       &xHigherPriorityTaskWoken); /* Will be set to true if succesfully unbloked a task*/
+    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -144,10 +138,7 @@ static void IRAM_ATTR isr_red_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x10;
 
-    xTaskNotifyFromISR(xTaskButtonCaptureHandle,
-                       buttonPressed,
-                       eSetBits,
-                       &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -168,10 +159,7 @@ static void IRAM_ATTR isr_green_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x20;
 
-    xTaskNotifyFromISR(xTaskButtonCaptureHandle,
-                       buttonPressed,
-                       eSetBits,
-                       &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -192,10 +180,7 @@ static void IRAM_ATTR isr_blue_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x40;
 
-    xTaskNotifyFromISR(xTaskButtonCaptureHandle,
-                       buttonPressed,
-                       eSetBits,
-                       &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -316,7 +301,7 @@ void timer_init(void)
     // timer_isr_callback_add(group, timer, timer_group_isr_callback, timer_info, 0);
 }
 
-static void advance_frame_task(void)
+static void advance_frame_task(void *arg)
 {
     /* Reciving notifications:
          * PROJECTOR SIGNAL:        SIGNAL_ISR = 0X01
@@ -437,15 +422,6 @@ static void advance_frame_task(void)
     }
 }
 
-bool synchronize_sig(uint32_t *frame, uint64_t *last_timer_val, uint64_t sig_array[], uint32_t size)
-{
-    int valid_vals = 0;
-    for (int i = 0; i < size; i++)
-    {
-        while (sig_array[i])
-    }
-    return true;
-}
 /*
  *
  *
@@ -758,10 +734,178 @@ void button_capture_task(void *arg)
     {
         /* Block indefinitely (without a timeout, so no need to check the function's
         return value) to wait for a notification. */
-        xTaskNotifyWait(0x00,                 /* Don't clear any bits on entry. */
-                        ULONG_MAX,            /* Clear all bits on exit. ULONG_MAX will clear all bits*/
-                        &ulInterButtonStatus, /* Receives the notification value. */
-                        portMAX_DELAY);       /* Block indefinitely. */
+
+        if (xButtonCaptureQueue != NULL)
+        {
+            if (xQueueReceive(xButtonCaptureQueue, &ulInterButtonStatus, portMAX_DELAY))
+            {
+                /*
+                 * ulInterButtonStatus:
+                 * 0x01  --> BUTTON (advance frame) for isr_advance_frame_handler 
+                 * 0x02  --> BUTTON (single/multi mode) for isr_single_mode_handler
+                 * 0x10  --> BUTTON (red button) for isr_red_button_handler
+                 * 0x20  --> BUTTON (green button) for isr_green_button_handler
+                 * 0x40  --> BUTTON (blue button) for isr_blue_button_handler
+                */
+
+                //printf("\nButton Capture Function: \n");
+                if (ulInterButtonStatus == 0x01)
+                {
+                    /* call advance frame function, which decides weather to advance the frame or not*/
+                    advance_frame_pressed(&singleMode);
+                }
+                else if (ulInterButtonStatus == 0x02)
+                {
+                    /* call signal mode function to set single of multi mode */
+                    signal_mode_pressed(&singleMode);
+                }
+                else if (ulInterButtonStatus == 0x10)
+                {
+                    red_button_pressed(&singleMode);
+                }
+                else if (ulInterButtonStatus == 0x20)
+                {
+                    green_button_pressed(&singleMode);
+                }
+                else if (ulInterButtonStatus == 0x40)
+                {
+                    blue_button_pressed(&singleMode);
+                }
+
+                if (singleMode)
+                {
+                    if ((ulInterButtonStatus >> 4) & 0x01)
+                    {
+                        // red button was pressed
+                        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
+
+                        if (greenEnable)
+                        {
+                            led_off(GREEN_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
+                        }
+                        if (blueEnable)
+                        {
+                            led_off(BLUE_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
+                        }
+                        led_on(RED_SIGNAL);
+                        redEnable = true;
+                        greenEnable = false;
+                        blueEnable = false;
+                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+                                    0x08,                    /* Value to update Notification */
+                                    eSetBits);               /* Action: eSetBits -> set bits */
+                    }
+                    else if ((ulInterButtonStatus >> 5) & 0x01)
+                    {
+                        // green button was pressed
+                        gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
+
+                        if (redEnable)
+                        {
+                            led_off(RED_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
+                        }
+                        if (blueEnable)
+                        {
+                            led_off(BLUE_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
+                        }
+                        led_on(GREEN_SIGNAL);
+                        redEnable = false;
+                        greenEnable = true;
+                        blueEnable = false;
+                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+                                    0x10,                    /* Value to update Notification */
+                                    eSetBits);               /* Action: eSetBits -> set bits */
+                    }
+                    else if ((ulInterButtonStatus >> 6) & 0x01)
+                    {
+                        // blue button was pressed
+                        gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
+
+                        if (greenEnable)
+                        {
+                            led_off(GREEN_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
+                        }
+                        if (redEnable)
+                        {
+                            led_off(RED_SIGNAL);
+                            gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
+                        }
+                        led_on(BLUE_SIGNAL);
+                        redEnable = false;
+                        greenEnable = false;
+                        blueEnable = true;
+                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+                                    0x20,                    /* Value to update Notification */
+                                    eSetBits);               /* Action: eSetBits -> set bits */
+                    }
+                }
+                else
+                {
+                    if ((ulInterButtonStatus >> 4) & 0x01)
+                    {
+                        /* red button was pressed */
+                        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
+                        redEnable = !redEnable;
+                        if (redEnable)
+                        {
+                            gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
+                        }
+                        else
+                        {
+                            led_off(RED_SIGNAL);
+                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0, false);
+                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0);
+                            // gpio_hold_en(GPIO_OUTPUT_RED_PWM);
+                        }
+                        vTaskDelay(1000 / portTICK_RATE_MS);
+                        gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
+                    }
+                    else if ((ulInterButtonStatus >> 5) & 0x01)
+                    {
+                        /* green button was pressed */
+                        gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
+                        greenEnable = !greenEnable;
+                        if (greenEnable)
+                        {
+                            gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
+                        }
+                        else
+                        {
+                            led_off(GREEN_SIGNAL);
+                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, false);
+                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
+                            // gpio_hold_en(GPIO_OUTPUT_GREEN_PWM);
+                        }
+                        vTaskDelay(1000 / portTICK_RATE_MS);
+                        gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
+                    }
+                    else if ((ulInterButtonStatus >> 6) & 0x01)
+                    {
+                        /* blue button was pressed */
+                        gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
+                        blueEnable = !blueEnable;
+                        if (blueEnable)
+                        {
+                            gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
+                        }
+                        else
+                        {
+                            led_off(BLUE_SIGNAL);
+                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2, false);
+                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2);
+                            // gpio_hold_en(GPIO_OUTPUT_BLUE_PWM);
+                        }
+                        vTaskDelay(1000 / portTICK_RATE_MS);
+                        gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
+                    }
+                }
+            }
+        }
 
         //printf("\nButton Capture Function: \n");
         if (ulInterButtonStatus & 0x01)
@@ -957,4 +1101,80 @@ void button_capture_task(void *arg)
             }
         }
     }
+}
+
+void advance_frame_pressed(uint32_t *singleMode)
+{
+    gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME);
+
+    if (!singleMode)
+    {
+        if (xAdvanceFrameQueue != NULL)
+        {
+            xQueueSend(xAdvanceFrameQueue, uint32_t 0x02, TickType_t 10);
+        }
+    }
+    // xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+    //             0x0a,                    /* Value to update Notification */
+    //             eSetBits);               /* Action: eSetBits -> set bits */
+
+    vTaskDelay(500 / portTICK_RATE_MS);
+    gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
+}
+
+void signal_mode_pressed(uint32_t *singleMode)
+{
+    gpio_intr_disable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
+    singleMode = !singleMode;
+    if (singleMode)
+    {
+        //gpio_intr_disable(GPIO_INPUT_SIGNAL);   Do not disable signal on sigle mode
+        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);    // Disable red button intrrupt
+        gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME); // disable advance frame button interrup
+        gpio_hold_dis(GPIO_OUTPUT_RED_PWM);          // disabling the gpio pin level hold on all three outputs
+        gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
+        gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
+        all_leds_off();
+        led_on(RED_SIGNAL); // turn red led on
+        redEnable = true;
+        greenEnable = false;
+        blueEnable = false;
+        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+                    0x04,                    /* Value to update Notification */
+                    eSetBits);               /* Action: eSetBits -> set bits */
+    }
+    else
+    {
+        //printf("changing to multy mode: buton pushed: \n");
+        gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
+        gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
+        gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
+        redEnable = true;
+        greenEnable = true;
+        blueEnable = true;
+        gpio_intr_enable(GPIO_INPUT_SIGNAL);
+        gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
+        gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
+        gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
+        gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
+        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+                    0x80,                    /* Value to update Notification */
+                    eSetBits);               /* Action: eSetBits -> set bits */
+    }
+
+    vTaskDelay(500 / portTICK_RATE_MS);
+    gpio_intr_enable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
+    continue;
+}
+
+void red_button_pressed(uint32_t *singleMode)
+{
+}
+
+void green_button_pressed(uint32_t *singleMode)
+{
+}
+
+void blue_button_pressed(uint32_t *singleMode)
+{
 }

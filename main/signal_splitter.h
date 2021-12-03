@@ -57,3 +57,12 @@ void timer_init(void);
 static void button_capture_task(void *arg);
 static void advance_frame_task(void *arg);
 static void adc_pwm_task(void *arg);
+
+void advance_frame_pressed(uint32_t *singleMode);
+void signal_mode_pressed(uint32_t *singleMode);
+
+void red_button_pressed(uint32_t *singleMode);
+
+void green_button_pressed(uint32_t *singleMode);
+
+void blue_button_pressed(uint32_t *singleMode);
