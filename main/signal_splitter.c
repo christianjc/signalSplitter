@@ -329,14 +329,15 @@ static void advance_frame_task(void)
     uint32_t current_frame = 0x03;
     uint64_t timer_val = 0;
     uint64_t last_timer_val = 0;
-    uint32_t missed_intervals = SYNC_SAMPLE_SIZE;
+    uint32_t missed_intervals = 0;
     uint64_t sync_sample_array[SYNC_SAMPLE_SIZE];
     bool synchronized = false;
     bool timer_started = false;
+    bool interval_isProcessed = false;
 
     const uint64_t tg_interval_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
     const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
-    int64_t error = -tg_interval_time;                       // this variable will hold the error from the interupt
+    int64_t error = 0;                                       // this variable will hold the error from the interupt
 
     // set timer to reset every 5655 to 5755 cycles
 
@@ -358,36 +359,50 @@ static void advance_frame_task(void)
                     /* Updatae timer value */
                     timer_get_counter_value(TIMER_GROUP_0, TIMER_0, &timer_val);
 
-                    /* Synchronize signla if unsynchronized */
+                    /* Synchronize signal if unsynchronized */
                     if (!synchronized)
                     {
-                        if (missed_intervals > 0)
-                        {
-                            sync_sample_array[SYNC_SAMPLE_SIZE - missed_intervals] = timer_val;
-                            missed_intervals--;
-                        }
-                        else
-                        {
-                            synchronized = synchronize_sig(&last_timer_val, sync_sample_array, array_size);
-                        }
+                        last_timer_val = timer_val;
+                        current_frame += missed_intervals;
+                        current_frame = current_frame % 3;
+                        missed_intervals = 0;
+                        error = tg_interval_time;
+                        synchronized = true;
+                        // Send update to led controller
                         continue;
                     }
 
-                    if (timer_val < allowed_error || timer_val > (tg_interval_time - allowed_error))
+                    uint32_t interval_width = timer_val - last_timer_val; // interval from last confirmed time and most reason clock value
+
+                    if (interval_width >= (tg_interval_time - allowed_error) && interval_width <= (tg_interval_time + allowed_error))
                     {
-                        error = timer_val - tg_interval_time;
+                        /* If the interval with is with in the expected error, 
+                        we update the frame and notify the led controller */
 
-                        if (abs(error) < allowed_error)
+                        /* we only update the fram and notify the led controller onece */
+                        current_frame++;
+                        current_frame = current_frame % 3;
+
+                        // send update to led controller
+
+                        error = interval_width - tg_interval_time;
+                        last_timer_val = timer_val;
+                        missed_intervals = 0;
+                    }
+                    else if (interval_width < allowed_error)
+                    {
+                        // check if error improves if we reconsider an new interval and update last_timer_val
+                        if (abs(error + interval_width) < abs(error))
                         {
-                            // reset interrupt timer
-                            //
-
-                            current_frame = current_frame % 3;
-                            current_frame++;
+                            error = error + interval_width;
+                            last_timer_val = timer_val;
                         }
                     }
-                    else if ()
+                    else if (interval_width > (tg_interval_time + allowed_error))
                     {
+                        missed_intervals += (interval_width / tg_interval_time);
+                        interval_width = interval_width % tg_interval_time;
+                        last_timer_val = timer_val - interval_width;
                     }
                 }
                 else if (ulInterruptStatus & 0x02)
@@ -405,6 +420,15 @@ static void advance_frame_task(void)
     }
 }
 
+bool synchronize_sig(uint32_t *frame, uint64_t *last_timer_val, uint64_t sig_array[], uint32_t size)
+{
+    int valid_vals = 0;
+    for (int i = 0; i < size; i++)
+    {
+        while (sig_array[i])
+    }
+    return true;
+}
 /*
  *
  *
