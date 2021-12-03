@@ -32,6 +32,10 @@
 #define LEDC_DUTY (2048)                // Set duty to 50%. ((2 ** 12) - 1) * 50% = 2048
 #define LEDC_FREQUENCY (5000)           // Frequency in Hertz. Set frequency at 5 kHz
 
+// Timer parameters
+#define TIMER_DIVIDER (80)     //  Hardware timer clock divider
+#define SYNC_SAMPLE_SIZE (100) // Sample size to sync signal
+
 // Constants
 typedef enum
 {
@@ -41,13 +45,14 @@ typedef enum
 } out_sig;
 
 void led_on(out_sig);
-void led_off(out_sig signal);
+void led_off(out_sig);
 void all_leds_off();
 // void green_led_on(void);
 // void blue_led_on(void);
 
 void ledc_init(void);
 void gpio_init(void);
+void timer_init(void);
 
 static void button_capture_task(void *arg);
 static void advance_frame_task(void *arg);

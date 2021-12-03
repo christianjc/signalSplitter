@@ -13,6 +13,7 @@
 #include "soc/ledc_reg.h"
 #include "hal/ledc_ll.h"
 #include "signal_splitter.h"
+#include "driver/timer.h"
 
 // Task handles
 static TaskHandle_t xTaskAdvanceFrameHandle = NULL;
@@ -63,6 +64,9 @@ void app_main(void)
 
     // configure led controller parameters
     ledc_init();
+
+    // configure timer
+    timer_init();
 }
 
 /* 
@@ -277,6 +281,42 @@ void ledc_init(void)
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 }
 
+/**
+ * @brief Initialize selected timer of timer group
+ *
+ * @param group Timer Group number, index from 0
+ * @param timer timer ID, index from 0
+ * @param auto_reload whether auto-reload on alarm event
+ * @param timer_interval_sec interval of alarm
+ */
+void timer_init(void)
+{
+    /* Select and initialize basic parameters of the timer */
+    timer_config_t config = {
+        .divider = TIMER_DIVIDER,
+        .counter_dir = TIMER_COUNT_UP,
+        .counter_en = TIMER_PAUSE,
+        .alarm_en = TIMER_ALARM_MAX,
+        .auto_reload = TIMER_AUTORELOAD_EN,
+    }; // default clock source is APB
+    timer_init(TIMER_GROUP_0, TIMER_0, &config);
+
+    /* Timer's counter will initially start from value below.
+       Also, if auto_reload is set, this value will be automatically reload on alarm */
+    timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
+
+    /* Configure the alarm value and the interrupt on alarm. */
+    //timer_set_alarm_value(group, timer, timer_interval_sec * TIMER_SCALE);
+    //timer_enable_intr(group, timer);
+
+    // example_timer_info_t *timer_info = calloc(1, sizeof(example_timer_info_t));
+    // timer_info->timer_group = group;
+    // timer_info->timer_idx = timer;
+    // timer_info->auto_reload = auto_reload;
+    // timer_info->alarm_interval = timer_interval_sec;
+    // timer_isr_callback_add(group, timer, timer_group_isr_callback, timer_info, 0);
+}
+
 static void advance_frame_task(void)
 {
     /* Reciving notifications:
@@ -288,27 +328,54 @@ static void advance_frame_task(void)
     uint32_t ulInterruptStatus = 0x00;
     uint32_t current_frame = 0x03;
     uint64_t timer_val = 0;
+    uint64_t last_timer_val = 0;
+    uint32_t missed_intervals = SYNC_SAMPLE_SIZE;
+    uint64_t sync_sample_array[SYNC_SAMPLE_SIZE];
+    bool synchronized = false;
+    bool timer_started = false;
 
-    const uint64_t target_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
-    const uint64_t allowed_error = (target_time * 0.1); // set allowed error to 10%
-    int64_t error = -target_time;                       // this variable will hold the error from the interupt
+    const uint64_t tg_interval_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
+    const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
+    int64_t error = -tg_interval_time;                       // this variable will hold the error from the interupt
 
-    // start the clock timer interrupt
     // set timer to reset every 5655 to 5755 cycles
 
     for (;;)
     {
         if (xAdvanceFrameQueue != NULL)
         {
-            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, portMAX_DELAY))
+            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, portMAX_DELAY)) // delay time to one second so that we pause the clock if no signal is recieved
             {
                 if (ulInterruptStatus & 0x01)
                 {
-                    // get clock time from timer
-                    // interrupt_time = get_timer()
-                    if (time_val < allowed_error || timer_val > (target_time - allowed_error))
+                    /* Start timer if is not running */
+                    if (!timer_started)
                     {
-                        error = timer_val - target_time;
+                        timer_start(TIMER_GROUP_0, TIMER_0);
+                        timer_started = true;
+                    }
+
+                    /* Updatae timer value */
+                    timer_get_counter_value(TIMER_GROUP_0, TIMER_0, &timer_val);
+
+                    /* Synchronize signla if unsynchronized */
+                    if (!synchronized)
+                    {
+                        if (missed_intervals > 0)
+                        {
+                            sync_sample_array[SYNC_SAMPLE_SIZE - missed_intervals] = timer_val;
+                            missed_intervals--;
+                        }
+                        else
+                        {
+                            synchronized = synchronize_sig(&last_timer_val, sync_sample_array, array_size);
+                        }
+                        continue;
+                    }
+
+                    if (timer_val < allowed_error || timer_val > (tg_interval_time - allowed_error))
+                    {
+                        error = timer_val - tg_interval_time;
 
                         if (abs(error) < allowed_error)
                         {
