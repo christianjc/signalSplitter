@@ -77,12 +77,11 @@ void app_main(void)
 static void IRAM_ATTR isr_signal_handler(void *arg)
 {
     BaseType_t xHigherPriorityTaskWoken;
+    uint32_t sig_msg = 0x01;
     xHigherPriorityTaskWoken = pdFALSE;
 
-    xTaskNotifyFromISR(xTaskAdvanceFrameHandle,    /* Pointer to task handle to notify */
-                       0x01,                       /* Value to update Notification */
-                       eSetBits,                   /* Action: eSetBits -> set bits */
-                       &xHigherPriorityTaskWoken); /* Will be set to true if succesfully unbloked a task*/
+    xQueueSendFromISR(xAdvanceFrameQueue, sig_msg, xHigherPriorityTaskWoken);
+
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -353,8 +352,8 @@ static void advance_frame_task(void)
                     if (!timer_started)
                     {
                         timer_start(TIMER_GROUP_0, TIMER_0);
-                        printf("*** timer started ***")
-                            timer_started = true;
+                        printf("*** timer started ***");
+                        timer_started = true;
                     }
 
                     /* Updatae timer value */
@@ -420,9 +419,9 @@ static void advance_frame_task(void)
                 }
                 else if (ulInterruptStatus & 0x02)
                 {
-                }
-                else if (ulInterruptStatus & 0x04)
-                {
+                    current_frame++;
+                    current_frame = current_frame % 3;
+                    // send update to led controller
                 }
                 else
                 {
