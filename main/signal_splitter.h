@@ -33,8 +33,8 @@
 #define LEDC_FREQUENCY (5000)           // Frequency in Hertz. Set frequency at 5 kHz
 
 // Timer parameters
-#define TIMER_DIVIDER (80)    //  Hardware timer clock divider
-#define SYNC_SAMPLE_SIZE (10) // Sample size to sync signal
+#define TIMER_DIVIDER (80)     //  Hardware timer clock divider
+#define SYNC_TRIGGER_SIZE (10) // Sample size to sync signal
 
 // Constants
 typedef enum

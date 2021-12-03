@@ -327,13 +327,13 @@ static void advance_frame_task(void)
 
     uint32_t ulInterruptStatus = 0x00;
     uint32_t current_frame = 0x03;
+    uint32_t missed_intervals = SYNC_TRIGGER_SIZE;
+    uint32_t noise_signal = 0;
     uint64_t timer_val = 0;
     uint64_t last_timer_val = 0;
-    uint32_t missed_intervals = 0;
-    uint64_t sync_sample_array[SYNC_SAMPLE_SIZE];
+
     bool synchronized = false;
     bool timer_started = false;
-    bool interval_isProcessed = false;
 
     const uint64_t tg_interval_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
     const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
@@ -345,7 +345,7 @@ static void advance_frame_task(void)
     {
         if (xAdvanceFrameQueue != NULL)
         {
-            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, portMAX_DELAY)) // delay time to one second so that we pause the clock if no signal is recieved
+            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, (TickType_t)100)) // wait for 100 ticks then stop timer and unsync signal
             {
                 if (ulInterruptStatus & 0x01)
                 {
@@ -353,7 +353,8 @@ static void advance_frame_task(void)
                     if (!timer_started)
                     {
                         timer_start(TIMER_GROUP_0, TIMER_0);
-                        timer_started = true;
+                        printf("*** timer started ***")
+                            timer_started = true;
                     }
 
                     /* Updatae timer value */
@@ -397,12 +398,24 @@ static void advance_frame_task(void)
                             error = error + interval_width;
                             last_timer_val = timer_val;
                         }
+                        noise_signal++; // Keep track of noise signal for teat purposes
                     }
                     else if (interval_width > (tg_interval_time + allowed_error))
                     {
+                        // if the we are out of sync missed intervals will grow and set synchronized to false
                         missed_intervals += (interval_width / tg_interval_time);
                         interval_width = interval_width % tg_interval_time;
                         last_timer_val = timer_val - interval_width;
+                        if (missed_intervals > SYNC_TRIGGER_SIZE)
+                        {
+                            missed_intervals++;
+                            synchronized = false;
+                        }
+                    }
+                    else
+                    {
+                        noise_signal++;
+                        printf("[MESSAGE]: Noise signal:  %d \n", noise_signal);
                     }
                 }
                 else if (ulInterruptStatus & 0x02)
@@ -415,6 +428,11 @@ static void advance_frame_task(void)
                 {
                     printf("[ERROR]: There was an error in advance_frame_task() function");
                 }
+            }
+            else
+            {
+                timer_pause(TIMER_GROUP_0, TIMER_0);
+                printf("*** timer has stoped ***");
             }
         }
     }
