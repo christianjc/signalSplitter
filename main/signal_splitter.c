@@ -18,6 +18,11 @@
 // Task handles
 static QueueHandle_t xButtonCaptureQueue = NULL;
 static QueueHandle_t xAdvanceFrameQueue = NULL;
+//static QueueHandle_t xSingleModeControlQueue = NULL;
+static QueueHandle_t xMultiModeControlQueue = NULL;
+
+//static TaskHandle_t xSingleModeTaskHandle = NULL;
+static TaskHandle_t xMultiModeTaskHandle = NULL;
 
 // Iterrupt handlers
 static void IRAM_ATTR isr_signal_handler(void *arg);
@@ -36,16 +41,13 @@ void app_main(void)
     // Create Queue handle
     xAdvanceFrameQueue = xQueueCreate(10, sizeof(uint32_t));
     xButtonCaptureQueue = xQueueCreate(10, sizeof(uint32_t));
+    //xSingleModeControlQueue = xQueueCreate(10, sizeof(uint32_t));
+    xMultiModeControlQueue = xQueueCreate(10, sizeof(uint32_t));
 
     if (xAdvanceFrameQueue == NULL || xButtonCaptureQueue == NULL)
     {
         printf("[ERROR]: Could not be create queue");
     }
-
-    //start gpio task
-    xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 11, NULL);
-    xTaskCreate(button_capture_task, "button_capture_task", 2048 * 2, NULL, 10, NULL);
-    xTaskCreate(adc_pwm_task, "adc_pwm_task", 2048 * 2, NULL, 9, NULL);
 
     //install gpio isr service
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
@@ -66,7 +68,14 @@ void app_main(void)
     ledc_init();
 
     // configure timer
-    timer_init();
+    timer_setUp();
+
+    //start gpio task
+    xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 12, NULL);
+    xTaskCreate(multiMode_controller_task, "multiMode_controller_task", 2048 * 4, NULL, 11, xMultiModeTaskHandle);
+    //xTaskCreate(singleMode_controller_task, "singleMode_controller_task", 2048 * 4, NULL, 11, NULL);
+    xTaskCreate(button_capture_task, "button_capture_task", 2048 * 2, NULL, 10, NULL);
+    xTaskCreate(adc_pwm_task, "adc_pwm_task", 2048 * 2, NULL, 9, NULL);
 }
 
 /* 
@@ -80,7 +89,7 @@ static void IRAM_ATTR isr_signal_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t sig_msg = 0x01;
 
-    xQueueSendFromISR(xAdvanceFrameQueue, sig_msg, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xAdvanceFrameQueue, &sig_msg, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -98,8 +107,9 @@ static void IRAM_ATTR isr_advance_frame_handler(void *arg)
     // Send advance notification to the advace frame task
     BaseType_t xHigherPriorityTaskWoken;
     xHigherPriorityTaskWoken = pdFALSE;
+    uint32_t buttonPressed = 0x01;
 
-    xQueueSendFromISR(xButtonCaptureQueue, (uint32_t)0x01, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -118,7 +128,7 @@ static void IRAM_ATTR isr_signal_mode_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x02;
 
-    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -138,7 +148,7 @@ static void IRAM_ATTR isr_red_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x10;
 
-    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -159,7 +169,7 @@ static void IRAM_ATTR isr_green_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x20;
 
-    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
@@ -180,7 +190,7 @@ static void IRAM_ATTR isr_blue_button_handler(void *arg)
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x40;
 
-    xQueueSendFromISR(xButtonCaptureQueue, buttonPressed, xHigherPriorityTaskWoken);
+    xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
     {
@@ -273,7 +283,7 @@ void ledc_init(void)
  * @param auto_reload whether auto-reload on alarm event
  * @param timer_interval_sec interval of alarm
  */
-void timer_init(void)
+void timer_setUp(void)
 {
     /* Select and initialize basic parameters of the timer */
     timer_config_t config = {
@@ -301,29 +311,74 @@ void timer_init(void)
     // timer_isr_callback_add(group, timer, timer_group_isr_callback, timer_info, 0);
 }
 
+static void adc_pwm_task(void *arg)
+{
+    /* ADC configuration */
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_11db);
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_11db);
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_11db);
+    int redValRed = 0;
+    int greenValRed = 0;
+    int blueValRed = 0;
+    int redCurr = 0;
+    int greenCurr = 0;
+    int blueCurr = 0;
+
+    for (;;)
+    {
+        // TODO: try to poll every second if is not being used, other wise poll every 250ms for 10 seconds
+        //        make the change from curr reading from previous readin to be about 100 for the check that
+        //        happens every second. just incase there is a lot of noise.
+        redValRed = adc1_get_raw(ADC1_CHANNEL_3);
+        greenValRed = adc1_get_raw(ADC1_CHANNEL_6);
+        blueValRed = adc1_get_raw(ADC1_CHANNEL_7);
+
+        if (abs(redValRed - redCurr) > 10)
+        {
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, redValRed));
+            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
+            redCurr = redValRed;
+            printf("redPWM: %d\n", redCurr);
+        }
+        if (abs(greenValRed - greenCurr) > 10)
+        {
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, greenValRed));
+            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
+            greenCurr = greenValRed;
+        }
+        if (abs(blueValRed - blueCurr) > 10)
+        {
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, blueValRed));
+            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
+            blueCurr = blueValRed;
+        }
+        vTaskDelay(500 / portTICK_RATE_MS);
+    }
+}
+
 static void advance_frame_task(void *arg)
 {
     /* Reciving notifications:
          * PROJECTOR SIGNAL:        SIGNAL_ISR = 0X01
          * ADVANCE FRAME BUTTON:    ADV_FRAME = 0x02
-         * TIME INTERRUPT
     */
 
     uint32_t ulInterruptStatus = 0x00;
     uint32_t current_frame = 0x03;
     uint32_t missed_intervals = SYNC_TRIGGER_SIZE;
     uint32_t noise_signal = 0;
+
     uint64_t timer_val = 0;
     uint64_t last_timer_val = 0;
+    int64_t error = 0;                                       // this variable will hold the error from the interupt
+    const uint64_t tg_interval_time = 5555;                  //100000            // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
+    const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
 
     bool synchronized = false;
     bool timer_started = false;
-
-    const uint64_t tg_interval_time = 5555;                  // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
-    const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
-    int64_t error = 0;                                       // this variable will hold the error from the interupt
-
-    // set timer to reset every 5655 to 5755 cycles
 
     for (;;)
     {
@@ -331,13 +386,13 @@ static void advance_frame_task(void *arg)
         {
             if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, (TickType_t)100)) // wait for 100 ticks then stop timer and unsync signal
             {
-                if (ulInterruptStatus & 0x01)
+                if (ulInterruptStatus == 0x01)
                 {
                     /* Start timer if is not running */
                     if (!timer_started)
                     {
                         timer_start(TIMER_GROUP_0, TIMER_0);
-                        printf("*** timer started ***");
+                        printf("*** timer started ***\n");
                         timer_started = true;
                     }
 
@@ -347,17 +402,19 @@ static void advance_frame_task(void *arg)
                     /* Synchronize signal if unsynchronized */
                     if (!synchronized)
                     {
+
                         last_timer_val = timer_val;
                         current_frame += missed_intervals;
                         current_frame = current_frame % 3;
                         missed_intervals = 0;
                         error = tg_interval_time;
                         synchronized = true;
-                        // Send update to led controller
+                        xQueueSend(xMultiModeControlQueue, &current_frame, (TickType_t)10);
                         continue;
                     }
 
                     uint32_t interval_width = timer_val - last_timer_val; // interval from last confirmed time and most reason clock value
+                    printf("frame interval:  %d\n", interval_width);
 
                     if (interval_width >= (tg_interval_time - allowed_error) && interval_width <= (tg_interval_time + allowed_error))
                     {
@@ -368,7 +425,7 @@ static void advance_frame_task(void *arg)
                         current_frame++;
                         current_frame = current_frame % 3;
 
-                        // send update to led controller
+                        xQueueSend(xMultiModeControlQueue, &current_frame, (TickType_t)10);
 
                         error = interval_width - tg_interval_time;
                         last_timer_val = timer_val;
@@ -402,11 +459,11 @@ static void advance_frame_task(void *arg)
                         printf("[MESSAGE]: Noise signal:  %d \n", noise_signal);
                     }
                 }
-                else if (ulInterruptStatus & 0x02)
+                else if (ulInterruptStatus == 0x02)
                 {
                     current_frame++;
                     current_frame = current_frame % 3;
-                    // send update to led controller
+                    xQueueSend(xMultiModeControlQueue, &current_frame, (TickType_t)10);
                 }
                 else
                 {
@@ -415,179 +472,250 @@ static void advance_frame_task(void *arg)
             }
             else
             {
-                timer_pause(TIMER_GROUP_0, TIMER_0);
-                printf("*** timer has stoped ***");
+                if (timer_started)
+                {
+                    timer_pause(TIMER_GROUP_0, TIMER_0);
+                    timer_started = false;
+                    printf("*** timer has stoped ***\n");
+                }
             }
         }
     }
 }
 
-/*
- *
- *
- *
-*/
-static void advance_frame_task(void *arg)
+static void multiMode_controller_task(void *arg)
 {
-    uint32_t ulInterruptStatus;
-    uint32_t current_frame;
-    uint32_t notify_msg;
-    out_sig sm_led = RED_SIGNAL;
-    bool multy_mode = true;
-
-    // double curr_time;
-    // double min_error_time;
-    ulInterruptStatus = 0x00; // message sent to this task
-    current_frame = 0x03;     // 0x01 is red: 0x02 is green: 0x04 is blue
+    uint32_t ledMessage = 0x0;
+    out_sig activeLed = RED_SIGNAL;
+    bool redLedDis = false;
+    bool greenLedDis = false;
+    bool blueLedDis = false;
+    //led_on(RED_SIGNAL);
 
     for (;;)
     {
-        /* Block indefinitely (without a timeout, so no need to check the function's
-        return value) to wait for a notification. This notification recieves notifications from 
-        Timer interrup, signal interrupt and button interrupt */
-
-        /* Reciving notifications:
-         * PROJECTOR SIGNAL:        SIGNAL_ISR = 0X01
-         * ADVANCE FRAME BUTTON:    ADV_BTN = 0x02
-         * SINGLE/MULTIPLE BUTTON:  SM_BTN_S = 0x04
-         * multy mode               SM_BTN_M = 0x80
-         * LED ON FOR SINGLE MODE:  SM_LED_RED = 0x08
-         * LED ON FOR SINGLE MODE:  SM_LED_GREEN = 0x10 
-         * LED ON FOR SINGLE MODE:  SM_LED_BLUE = 0x20
-         * TIMER INTERRUPT:         TIMER_ISR = 0x40
-         * 
-         * 
-        */
-
-        xTaskNotifyWait(0x00,               /* Don't clear any bits on entry. */
-                        ULONG_MAX,          /* Clear all bits on exit. ULONG_MAX will clear all bits on exit */
-                        &ulInterruptStatus, /* Receives the notification value. */
-                        portMAX_DELAY);     /* Block indefinitely. */
-
-        //printf("Advance frame notificaton: %d\n", ulInterruptStatus);
-
-        // first copy the notification message  and record the time from the timer;
-        notify_msg = ulInterruptStatus;
-        // get_time_from_timer();
-
-        if (notify_msg & 0x04)
+        if (xMultiModeControlQueue != NULL)
         {
-            multy_mode = false;
-            //printf("Set multy_mode to:  %x\n", multy_mode);
-        }
-        else if (notify_msg & 0x80)
-        {
-            multy_mode = true;
-            //printf("Set multy_mode to:  %x\n", multy_mode);
-        }
-        else if (notify_msg & 0x08)
-        {
-            sm_led = RED_SIGNAL;
-        }
-        else if (notify_msg & 0x10)
-        {
-            sm_led = GREEN_SIGNAL;
-        }
-        else if (notify_msg & 0x20)
-        {
-            sm_led = BLUE_SIGNAL;
-        }
-        else
-        {
-            if (multy_mode)
+            if (xQueueReceive(xMultiModeControlQueue, &ledMessage, portMAX_DELAY))
             {
-                if (notify_msg & 0x01)
+                /*
+                * ledMessage:
+                * 0x00  -->  Red led on
+                * 0x01  -->  Green led on
+                * 0x02  -->  Blue led on
+                *
+                * 0x21  -->  Red led enable/disable
+                * 0x22  -->  Green led enable/disable
+                * 0x23  -->  Blue led enable/disable
+                * 
+                * */
+                printf("recived message: %x\n", ledMessage);
+                if (ledMessage == 0x00)
                 {
-                    // check if it has been 180Hz since last frame change
-                    // comper timer with 180Hz;
-                    all_leds_off();
-                    current_frame = current_frame % 3;
-                    //printf("[MULTY_MODE]: Frame changed by input signal to:  %x\n", current_frame);
-                    if (current_frame == RED_SIGNAL)
+                    if (activeLed != NO_SIGNAL)
                     {
-                        led_on(RED_SIGNAL);
-                        //printf("turn red on");
+                        if (!redLedDis)
+                        {
+                            led_off(activeLed);
+                            activeLed = RED_SIGNAL;
+                            led_on(activeLed);
+                        }
+                        else
+                        {
+                            led_off(activeLed);
+                            activeLed = NO_SIGNAL;
+                        }
                     }
-                    else if (current_frame == GREEN_SIGNAL)
+                    else
                     {
-                        led_on(GREEN_SIGNAL);
+                        if (!redLedDis)
+                        {
+                            activeLed = RED_SIGNAL;
+                            led_on(activeLed);
+                        }
                     }
-                    else if (current_frame == BLUE_SIGNAL)
-                    {
-                        led_on(BLUE_SIGNAL);
-                    }
-                    current_frame++;
                 }
-                else if (notify_msg & 0x02)
+                else if (ledMessage == 0x01)
                 {
-                    all_leds_off();
-                    current_frame = current_frame % 3;
-                    //printf("Frame changed by button to:  %x\n", current_frame);
-                    if (current_frame == RED_SIGNAL)
+                    if (activeLed != NO_SIGNAL)
                     {
-                        led_on(RED_SIGNAL);
+                        if (!greenLedDis)
+                        {
+                            led_off(activeLed);
+                            activeLed = GREEN_SIGNAL;
+                            led_on(activeLed);
+                        }
+                        else
+                        {
+                            led_off(activeLed);
+                            activeLed = NO_SIGNAL;
+                        }
                     }
-                    else if (current_frame == GREEN_SIGNAL)
+                    else
                     {
-                        led_on(GREEN_SIGNAL);
+                        if (!greenLedDis)
+                        {
+                            activeLed = GREEN_SIGNAL;
+                            led_on(activeLed);
+                        }
                     }
-                    else if (current_frame == BLUE_SIGNAL)
+                }
+                else if (ledMessage == 0x02)
+                {
+                    if (activeLed != NO_SIGNAL)
                     {
-                        led_on(BLUE_SIGNAL);
+                        if (!blueLedDis)
+                        {
+                            led_off(activeLed);
+                            activeLed = BLUE_SIGNAL;
+                            led_on(activeLed);
+                        }
+                        else
+                        {
+                            led_off(activeLed);
+                            activeLed = NO_SIGNAL;
+                        }
                     }
-                    current_frame++;
+                    else
+                    {
+                        if (!blueLedDis)
+                        {
+                            activeLed = BLUE_SIGNAL;
+                            led_on(activeLed);
+                        }
+                    }
                 }
-                else
+                else if (ledMessage == 0x21)
                 {
-                    //printf("Unknown notification !!!!!!!!!\n");
+                    redLedDis = !redLedDis;
                 }
-            }
-            else
-            {
-                if (notify_msg & 0x01)
+                else if (ledMessage == 0x22)
                 {
-                    // check if it has been 180Hz since last frame change
-                    // comper timer with 180Hz;
-
-                    current_frame = current_frame % 3;
-                    current_frame++;
-
-                    led_off(sm_led);
-
-                    //printf("[SINGLE_MODE]: Frame changed by input signal to:  %x\n", sm_led);
-                    led_on(sm_led);
+                    greenLedDis = !greenLedDis;
                 }
-                else
+                else if (ledMessage == 0x23)
                 {
-                    //printf("Unknown behavior: ??????   ---  %x\n", notify_msg);
+                    blueLedDis = !blueLedDis;
                 }
             }
         }
-
-        /* 
-         * This function is notify when the an interrup is triggered. There are three diferent interupts 
-         * that triger this task. 
-         * Main signal interrupt - this is the projector signal
-         * Timer interrupt - this signal gets triggerd every 180Hz
-         * Advance frame button interrupt - this is the button to manually advance a frame
-         * 
-        */
-
-        // First we need to identify the source of the notification
-
-        // if (ulInterruptStatus == SIGNAL_ISR)
-        // {
-        // Get time elapsed since last interrupt
-        // Check whether it is close to the 180Hz cycle
-        // check how logn it has been since the last frame change
-        // if the interrup is within the 180Hz time then change the frame and reset the timer
-        // check the difference last_frame_change - current_interrup_trigger = time_elapsed ----> we want time elapsed to be
-        // as close to 180Hz as posible. we can achive this by updating time_elapsed at every interrupt
-        // we want to choose the interrupt to change frames as the one that gives the smallest (time_elapsed - 1/(180))
-        // we will exept a 10% error for the frame change
-        //}
     }
 }
+
+// static void singleMode_controller_task(void *arg)
+// {
+//     uint32_t ledMessage = 0x0;
+//     out_sig activeLed = RED_SIGNAL;
+//     bool redLedDis = false;
+//     bool greenLedDis = false;
+//     bool blueLedDis = false;
+
+//     for (;;)
+//     {
+//         if (xSingleModeControlQueue != NULL)
+//         {
+//             if (xQueueReceive(xSingleModeControlQueue, &ledMessage, portMAX_DELAY))
+//             {
+//                 /*
+//                 * ledMessage:
+//                 * 0x01  -->  Red led on
+//                 * 0x02  -->  Green led on
+//                 * 0x03  -->  Blue led on
+//                 *
+//                 * 0x21  -->  Red led enable/disable
+//                 * 0x22  -->  Green led enable/disable
+//                 * 0x23  -->  Blue led enable/disable
+//                 *
+//                 * */
+
+//                 if (ledMessage == 0x01)
+//                 {
+//                     if (activeLed != NULL)
+//                     {
+//                         if (!redLedDis)
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = RED_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                         else
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = NULL;
+//                         }
+//                     }
+//                     else
+//                     {
+//                         if (!redLedDis)
+//                         {
+//                             activeLed = RED_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                     }
+//                 }
+//                 else if (ledMessage == 0x02)
+//                 {
+//                     if (activeLed != NULL)
+//                     {
+//                         if (!greenLedDis)
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = GREEN_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                         else
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = NULL;
+//                         }
+//                     }
+//                     else
+//                     {
+//                         if (!greenLedDis)
+//                         {
+//                             activeLed = GREEN_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                     }
+//                 }
+//                 else if (ledMessage == 0x03)
+//                 {
+//                     if (activeLed != NULL)
+//                     {
+//                         if (!blueLedDis)
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = BLUE_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                         else
+//                         {
+//                             led_off(activeLed);
+//                             activeLed = NULL;
+//                         }
+//                     }
+//                     else
+//                     {
+//                         if (!blueLedDis)
+//                         {
+//                             activeLed = BLUE_SIGNAL;
+//                             led_on(activeLed);
+//                         }
+//                     }
+//                 }
+//                 else if (ledMessage == 0x21)
+//                 {
+//                     redLedDis = !redLedDis;
+//                 }
+//                 else if (ledMessage == 0x22)
+//                 {
+//                     greenLedDis = !greenLedDis;
+//                 }
+//                 else if (ledMessage == 0x23)
+//             }
+//         }
+//     }
+// }
 
 // TODO: this function needs to be modify to ensure the pins that are off are not floting and set to low
 void led_on(out_sig signal)
@@ -595,6 +723,7 @@ void led_on(out_sig signal)
     if (signal == RED_SIGNAL)
     {
         // do this
+        //printf("in led_on RED\n");
         gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0, true);
         ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0);
@@ -602,6 +731,7 @@ void led_on(out_sig signal)
     else if (signal == GREEN_SIGNAL)
     {
         // turn on green lingght
+
         gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, true);
         ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
@@ -609,6 +739,7 @@ void led_on(out_sig signal)
     else if (signal == BLUE_SIGNAL)
     {
         // turn on blue signal
+        //printf("in led_on BLUE\n");
         gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2, true);
         ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2);
@@ -648,7 +779,7 @@ void led_off(out_sig signal)
     }
     else
     {
-        //printf("There was an error in LED_ON \n");
+        printf("There was an error in LED_ON \n");
     }
     //printf("\nOn -red before register %x\n", REG_READ(LEDC_LSCH0_CONF0_REG));
 }
@@ -668,67 +799,14 @@ void all_leds_off(void)
     gpio_hold_en(GPIO_OUTPUT_BLUE_PWM);
 }
 
-static void adc_pwm_task(void *arg)
-{
-    /* ADC configuration */
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_11db);
-    int redValRed = 0;
-    int greenValRed = 0;
-    int blueValRed = 0;
-    int redCurr = 0;
-    int greenCurr = 0;
-    int blueCurr = 0;
-
-    for (;;)
-    {
-        // TODO: try to poll every second if is not being used, other wise poll every 250ms for 10 seconds
-        //        make the change from curr reading from previous readin to be about 100 for the check that
-        //        happens every second. just incase there is a lot of noise.
-        redValRed = adc1_get_raw(ADC1_CHANNEL_3);
-        greenValRed = adc1_get_raw(ADC1_CHANNEL_6);
-        blueValRed = adc1_get_raw(ADC1_CHANNEL_7);
-
-        if (abs(redValRed - redCurr) > 10)
-        {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, redValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
-            redCurr = redValRed;
-        }
-        if (abs(greenValRed - greenCurr) > 10)
-        {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, greenValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
-            greenCurr = greenValRed;
-        }
-        if (abs(blueValRed - blueCurr) > 10)
-        {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, blueValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
-            blueCurr = blueValRed;
-        }
-        vTaskDelay(500 / portTICK_RATE_MS);
-    }
-}
-
 /* TODO: Write a description of the function */
 void button_capture_task(void *arg)
 {
-    uint32_t ulInterButtonStatus;
-    bool redEnable;
-    bool greenEnable;
-    bool blueEnable;
-    bool singleMode;
-
-    redEnable = true;
-    greenEnable = true;
-    blueEnable = true;
-    singleMode = false;
-    ulInterButtonStatus = 0x00;
+    uint32_t ulInterButtonStatus = 0x00;
+    bool singleMode = false;
+    // bool redEnable = true;
+    // bool greenEnable = true;
+    // bool blueEnable = true;
 
     for (;;)
     {
@@ -761,6 +839,7 @@ void button_capture_task(void *arg)
                 }
                 else if (ulInterButtonStatus == 0x10)
                 {
+                    /* calls red button pressed to */
                     red_button_pressed(&singleMode);
                 }
                 else if (ulInterButtonStatus == 0x20)
@@ -771,347 +850,21 @@ void button_capture_task(void *arg)
                 {
                     blue_button_pressed(&singleMode);
                 }
-
-                if (singleMode)
-                {
-                    if ((ulInterButtonStatus >> 4) & 0x01)
-                    {
-                        // red button was pressed
-                        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
-
-                        if (greenEnable)
-                        {
-                            led_off(GREEN_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                        }
-                        if (blueEnable)
-                        {
-                            led_off(BLUE_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                        }
-                        led_on(RED_SIGNAL);
-                        redEnable = true;
-                        greenEnable = false;
-                        blueEnable = false;
-                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                                    0x08,                    /* Value to update Notification */
-                                    eSetBits);               /* Action: eSetBits -> set bits */
-                    }
-                    else if ((ulInterButtonStatus >> 5) & 0x01)
-                    {
-                        // green button was pressed
-                        gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
-
-                        if (redEnable)
-                        {
-                            led_off(RED_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                        }
-                        if (blueEnable)
-                        {
-                            led_off(BLUE_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                        }
-                        led_on(GREEN_SIGNAL);
-                        redEnable = false;
-                        greenEnable = true;
-                        blueEnable = false;
-                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                                    0x10,                    /* Value to update Notification */
-                                    eSetBits);               /* Action: eSetBits -> set bits */
-                    }
-                    else if ((ulInterButtonStatus >> 6) & 0x01)
-                    {
-                        // blue button was pressed
-                        gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
-
-                        if (greenEnable)
-                        {
-                            led_off(GREEN_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                        }
-                        if (redEnable)
-                        {
-                            led_off(RED_SIGNAL);
-                            gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                        }
-                        led_on(BLUE_SIGNAL);
-                        redEnable = false;
-                        greenEnable = false;
-                        blueEnable = true;
-                        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                                    0x20,                    /* Value to update Notification */
-                                    eSetBits);               /* Action: eSetBits -> set bits */
-                    }
-                }
-                else
-                {
-                    if ((ulInterButtonStatus >> 4) & 0x01)
-                    {
-                        /* red button was pressed */
-                        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
-                        redEnable = !redEnable;
-                        if (redEnable)
-                        {
-                            gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
-                        }
-                        else
-                        {
-                            led_off(RED_SIGNAL);
-                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0, false);
-                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0);
-                            // gpio_hold_en(GPIO_OUTPUT_RED_PWM);
-                        }
-                        vTaskDelay(1000 / portTICK_RATE_MS);
-                        gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                    }
-                    else if ((ulInterButtonStatus >> 5) & 0x01)
-                    {
-                        /* green button was pressed */
-                        gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
-                        greenEnable = !greenEnable;
-                        if (greenEnable)
-                        {
-                            gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-                        }
-                        else
-                        {
-                            led_off(GREEN_SIGNAL);
-                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, false);
-                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
-                            // gpio_hold_en(GPIO_OUTPUT_GREEN_PWM);
-                        }
-                        vTaskDelay(1000 / portTICK_RATE_MS);
-                        gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                    }
-                    else if ((ulInterButtonStatus >> 6) & 0x01)
-                    {
-                        /* blue button was pressed */
-                        gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
-                        blueEnable = !blueEnable;
-                        if (blueEnable)
-                        {
-                            gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-                        }
-                        else
-                        {
-                            led_off(BLUE_SIGNAL);
-                            // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2, false);
-                            // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2);
-                            // gpio_hold_en(GPIO_OUTPUT_BLUE_PWM);
-                        }
-                        vTaskDelay(1000 / portTICK_RATE_MS);
-                        gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                    }
-                }
-            }
-        }
-
-        //printf("\nButton Capture Function: \n");
-        if (ulInterButtonStatus & 0x01)
-        {
-            /* If the advance frame button was pressed check send a 
-                notidication to the advance frame task 
-            */
-            gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME);
-            xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                        0x0a,                    /* Value to update Notification */
-                        eSetBits);               /* Action: eSetBits -> set bits */
-
-            vTaskDelay(500 / portTICK_RATE_MS);
-            gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
-            continue;
-        }
-
-        if ((ulInterButtonStatus >> 1) & 0x01)
-        {
-            gpio_intr_disable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
-            singleMode = !singleMode;
-            if (singleMode)
-            {
-                //gpio_intr_disable(GPIO_INPUT_SIGNAL);   Do not disable signal on sigle mode
-                gpio_intr_disable(GPIO_INPUT_RED_BUTTON);    // Disable red button intrrupt
-                gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME); // disable advance frame button interrup
-                gpio_hold_dis(GPIO_OUTPUT_RED_PWM);          // disabling the gpio pin level hold on all three outputs
-                gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-                gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-                all_leds_off();
-                led_on(RED_SIGNAL); // turn red led on
-                redEnable = true;
-                greenEnable = false;
-                blueEnable = false;
-                xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                            0x04,                    /* Value to update Notification */
-                            eSetBits);               /* Action: eSetBits -> set bits */
-            }
-            else
-            {
-                //printf("changing to multy mode: buton pushed: \n");
-                gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
-                gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-                gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-                redEnable = true;
-                greenEnable = true;
-                blueEnable = true;
-                gpio_intr_enable(GPIO_INPUT_SIGNAL);
-                gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
-                gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                            0x80,                    /* Value to update Notification */
-                            eSetBits);               /* Action: eSetBits -> set bits */
-            }
-
-            vTaskDelay(500 / portTICK_RATE_MS);
-            gpio_intr_enable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
-            continue;
-        }
-
-        if (singleMode)
-        {
-            if ((ulInterButtonStatus >> 4) & 0x01)
-            {
-                // red button was pressed
-                gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
-
-                if (greenEnable)
-                {
-                    led_off(GREEN_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                }
-                if (blueEnable)
-                {
-                    led_off(BLUE_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                }
-                led_on(RED_SIGNAL);
-                redEnable = true;
-                greenEnable = false;
-                blueEnable = false;
-                xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                            0x08,                    /* Value to update Notification */
-                            eSetBits);               /* Action: eSetBits -> set bits */
-            }
-            else if ((ulInterButtonStatus >> 5) & 0x01)
-            {
-                // green button was pressed
-                gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
-
-                if (redEnable)
-                {
-                    led_off(RED_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                }
-                if (blueEnable)
-                {
-                    led_off(BLUE_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-                }
-                led_on(GREEN_SIGNAL);
-                redEnable = false;
-                greenEnable = true;
-                blueEnable = false;
-                xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                            0x10,                    /* Value to update Notification */
-                            eSetBits);               /* Action: eSetBits -> set bits */
-            }
-            else if ((ulInterButtonStatus >> 6) & 0x01)
-            {
-                // blue button was pressed
-                gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
-
-                if (greenEnable)
-                {
-                    led_off(GREEN_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-                }
-                if (redEnable)
-                {
-                    led_off(RED_SIGNAL);
-                    gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-                }
-                led_on(BLUE_SIGNAL);
-                redEnable = false;
-                greenEnable = false;
-                blueEnable = true;
-                xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                            0x20,                    /* Value to update Notification */
-                            eSetBits);               /* Action: eSetBits -> set bits */
-            }
-        }
-        else
-        {
-            if ((ulInterButtonStatus >> 4) & 0x01)
-            {
-                /* red button was pressed */
-                gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
-                redEnable = !redEnable;
-                if (redEnable)
-                {
-                    gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
-                }
-                else
-                {
-                    led_off(RED_SIGNAL);
-                    // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0, false);
-                    // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0);
-                    // gpio_hold_en(GPIO_OUTPUT_RED_PWM);
-                }
-                vTaskDelay(1000 / portTICK_RATE_MS);
-                gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-            }
-            else if ((ulInterButtonStatus >> 5) & 0x01)
-            {
-                /* green button was pressed */
-                gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
-                greenEnable = !greenEnable;
-                if (greenEnable)
-                {
-                    gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-                }
-                else
-                {
-                    led_off(GREEN_SIGNAL);
-                    // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, false);
-                    // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
-                    // gpio_hold_en(GPIO_OUTPUT_GREEN_PWM);
-                }
-                vTaskDelay(1000 / portTICK_RATE_MS);
-                gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-            }
-            else if ((ulInterButtonStatus >> 6) & 0x01)
-            {
-                /* blue button was pressed */
-                gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
-                blueEnable = !blueEnable;
-                if (blueEnable)
-                {
-                    gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-                }
-                else
-                {
-                    led_off(BLUE_SIGNAL);
-                    // ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2, false);
-                    // ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_2);
-                    // gpio_hold_en(GPIO_OUTPUT_BLUE_PWM);
-                }
-                vTaskDelay(1000 / portTICK_RATE_MS);
-                gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
             }
         }
     }
 }
 
-void advance_frame_pressed(uint32_t *singleMode)
+void advance_frame_pressed(bool *singleMode)
 {
+    uint32_t msg = 0x02;
     gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME);
 
     if (!singleMode)
     {
         if (xAdvanceFrameQueue != NULL)
         {
-            xQueueSend(xAdvanceFrameQueue, uint32_t 0x02, TickType_t 10);
+            xQueueSend(xAdvanceFrameQueue, &msg, (TickType_t)10);
         }
     }
     // xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
@@ -1122,59 +875,66 @@ void advance_frame_pressed(uint32_t *singleMode)
     gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
 }
 
-void signal_mode_pressed(uint32_t *singleMode)
+void signal_mode_pressed(bool *singleMode)
 {
     gpio_intr_disable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
-    singleMode = !singleMode;
+    *singleMode = !(*singleMode);
     if (singleMode)
     {
+
+        // send message to led controller to turn switch to single mode
+
         //gpio_intr_disable(GPIO_INPUT_SIGNAL);   Do not disable signal on sigle mode
-        gpio_intr_disable(GPIO_INPUT_RED_BUTTON);    // Disable red button intrrupt
-        gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME); // disable advance frame button interrup
-        gpio_hold_dis(GPIO_OUTPUT_RED_PWM);          // disabling the gpio pin level hold on all three outputs
-        gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-        gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-        all_leds_off();
-        led_on(RED_SIGNAL); // turn red led on
-        redEnable = true;
-        greenEnable = false;
-        blueEnable = false;
-        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                    0x04,                    /* Value to update Notification */
-                    eSetBits);               /* Action: eSetBits -> set bits */
+        // gpio_intr_disable(GPIO_INPUT_RED_BUTTON);    // Disable red button intrrupt
+        // gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME); // disable advance frame button interrup
+        // gpio_hold_dis(GPIO_OUTPUT_RED_PWM);          // disabling the gpio pin level hold on all three outputs
+        // gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
+        // gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
+        // all_leds_off();
+        // led_on(RED_SIGNAL); // turn red led on
+        // // redEnable = true;
+        // // greenEnable = false;
+        // // blueEnable = false;
+        // xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+        //             0x04,                    /* Value to update Notification */
+        //             eSetBits);               /* Action: eSetBits -> set bits */
     }
     else
     {
+        // send a messge to led controller to switch to multi mode
+
         //printf("changing to multy mode: buton pushed: \n");
-        gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
-        gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
-        gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
-        redEnable = true;
-        greenEnable = true;
-        blueEnable = true;
-        gpio_intr_enable(GPIO_INPUT_SIGNAL);
-        gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
-        gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
-        gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
-        gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
-        xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
-                    0x80,                    /* Value to update Notification */
-                    eSetBits);               /* Action: eSetBits -> set bits */
+        // gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
+        // gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
+        // gpio_hold_dis(GPIO_OUTPUT_BLUE_PWM);
+        // // redEnable = true;
+        // // greenEnable = true;
+        // // blueEnable = true;
+        // gpio_intr_enable(GPIO_INPUT_SIGNAL);
+        // gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
+        // gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
+        // gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
+        // gpio_intr_enable(GPIO_INPUT_BLUE_BUTTON);
+        // xTaskNotify(xTaskAdvanceFrameHandle, /* Pointer to task handle to notify */
+        //             0x80,                    /* Value to update Notification */
+        //             eSetBits);               /* Action: eSetBits -> set bits */
     }
 
     vTaskDelay(500 / portTICK_RATE_MS);
     gpio_intr_enable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
-    continue;
 }
 
-void red_button_pressed(uint32_t *singleMode)
+void red_button_pressed(bool *singleMode)
 {
+    printf("red pressed\n");
 }
 
-void green_button_pressed(uint32_t *singleMode)
+void green_button_pressed(bool *singleMode)
 {
+    printf("green pressed\n");
 }
 
-void blue_button_pressed(uint32_t *singleMode)
+void blue_button_pressed(bool *singleMode)
 {
+    printf("blue pressed\n");
 }
