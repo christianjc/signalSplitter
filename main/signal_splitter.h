@@ -61,6 +61,8 @@ static void adc_pwm_task(void *arg);
 static void multiMode_controller_task(void *arg);
 static void singleMode_controller_task(void *arg);
 
+void set_update_duty(ledc_channel_t led_channel, int value);
+
 void advance_frame_pressed(bool *singleMode);
 void signal_mode_pressed(bool *singleMode);
 

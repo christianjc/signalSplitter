@@ -15,16 +15,17 @@
 #include "signal_splitter.h"
 #include "driver/timer.h"
 
-// Task handles
+/* Queue handels */
 static QueueHandle_t xButtonCaptureQueue = NULL;
 static QueueHandle_t xAdvanceFrameQueue = NULL;
 static QueueHandle_t xSingleModeControlQueue = NULL;
 static QueueHandle_t xMultiModeControlQueue = NULL;
 
+/* Task handels */
 static TaskHandle_t xSingleModeTaskHandle = NULL;
 static TaskHandle_t xMultiModeTaskHandle = NULL;
 
-// Iterrupt handlers
+/* Iterrupt Servicies Routing callback functions */
 static void IRAM_ATTR isr_signal_handler(void *arg);
 static void IRAM_ATTR isr_advance_frame_handler(void *arg);
 static void IRAM_ATTR isr_signal_mode_handler(void *arg);
@@ -32,24 +33,29 @@ static void IRAM_ATTR isr_red_button_handler(void *arg);
 static void IRAM_ATTR isr_green_button_handler(void *arg);
 static void IRAM_ATTR isr_blue_button_handler(void *arg);
 
+/**
+ * @brief Main app function for setup and initialization happens
+ */
+
 void app_main(void)
 {
 
-    // Set the LEDC peripheral configuration
+    /* Set the LEDC peripheral configuration */
     gpio_init();
 
-    // Create Queue handle
+    /* Create Queue handles */
     xAdvanceFrameQueue = xQueueCreate(10, sizeof(uint32_t));
     xButtonCaptureQueue = xQueueCreate(10, sizeof(uint32_t));
     xSingleModeControlQueue = xQueueCreate(10, sizeof(uint32_t));
     xMultiModeControlQueue = xQueueCreate(10, sizeof(uint32_t));
 
-    if (xAdvanceFrameQueue == NULL || xButtonCaptureQueue == NULL)
+    /* Verify that the queue handles were succesfully created */
+    if (xAdvanceFrameQueue == NULL || xButtonCaptureQueue == NULL || xSingleModeControlQueue == NULL || xMultiModeControlQueue == NULL)
     {
         printf("[ERROR]: Could not be create queue");
     }
 
-    //install gpio isr service
+    /* install gpio isr service */
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
     //hook isr handler for specific gpio pin
     gpio_isr_handler_add(GPIO_INPUT_SIGNAL, isr_signal_handler, NULL);
@@ -64,13 +70,21 @@ void app_main(void)
     //hook isr handler for specific gpio pin
     gpio_isr_handler_add(GPIO_INPUT_BLUE_BUTTON, isr_blue_button_handler, NULL);
 
-    // configure led controller parameters
+    /* configure led controller parameters */
     ledc_init();
 
-    // configure timer
+    /* configure timer */
     timer_setUp();
 
-    //start task
+    /* ADC configuration */
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_11db);
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_11db);
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_11db);
+
+    /* Create application tasks */
     xTaskCreate(advance_frame_task, "advance_frame_task", 2048 * 2, NULL, 12, NULL);
     xTaskCreate(multiMode_controller_task, "multiMode_controller_task", 2048 * 4, NULL, 11, &xMultiModeTaskHandle);
     xTaskCreate(singleMode_controller_task, "singleMode_controller_task", 2048 * 4, NULL, 11, &xSingleModeTaskHandle);
@@ -78,17 +92,17 @@ void app_main(void)
     xTaskCreate(adc_pwm_task, "adc_pwm_task", 2048 * 2, NULL, 9, NULL);
 }
 
-/* 
- * Interrupt function handler for the Projector input signal. It it a hardware interrupt 
- * which gets trigger at the raising edge for the input. It then sends a notification to 
- * the advance frame task.
-*/
+/** 
+ * @brief Interrupt function handler for the Projector input signal. It it a hardware interrupt 
+ *        which gets trigger at the raising edge for the input. It then sends a notification to 
+ *        the advance frame task.
+ */
 static void IRAM_ATTR isr_signal_handler(void *arg)
 {
     BaseType_t xHigherPriorityTaskWoken;
     xHigherPriorityTaskWoken = pdFALSE;
-    uint32_t sig_msg = 0x01;
 
+    uint32_t sig_msg = 0x01;
     xQueueSendFromISR(xAdvanceFrameQueue, &sig_msg, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
@@ -97,14 +111,13 @@ static void IRAM_ATTR isr_signal_handler(void *arg)
     }
 }
 
-/* 
- * Interrupt function handler for the advance frame BUTTON. It it a hardware interrupt 
- * which gets trigger when the advance BUTTON is pressed. It then sends a notification to 
- * the Button capture task.
-*/
+/**  
+ * @brief Interrupt function handler for the advance frame BUTTON. It it a hardware interrupt 
+ *        which gets trigger when the advance BUTTON is pressed. It then sends a notification to 
+ *        the Button capture task.
+ */
 static void IRAM_ATTR isr_advance_frame_handler(void *arg)
 {
-    // Send advance notification to the advace frame task
     BaseType_t xHigherPriorityTaskWoken;
     xHigherPriorityTaskWoken = pdFALSE;
     uint32_t buttonPressed = 0x01;
@@ -116,18 +129,17 @@ static void IRAM_ATTR isr_advance_frame_handler(void *arg)
     }
 }
 
-/* 
- * Interrupt function handler for the BUTTON to change from multi mode to single mode. It it a 
- * hardware interrupt which gets trigger when the multi/single mode BUTTON is pressed. It then sends 
- * a notification to the Button capture task.
-*/
+/** 
+ * @brief Interrupt function handler for the BUTTON to change from multi mode to single mode. It it a 
+ *        hardware interrupt which gets trigger when the multi/single mode BUTTON is pressed. It then sends 
+ *        a notification to the Button capture task.
+ */
 static void IRAM_ATTR isr_signal_mode_handler(void *arg)
 {
     BaseType_t xHigherPriorityTaskWoken;
-
     xHigherPriorityTaskWoken = pdFALSE;
-    uint32_t buttonPressed = 0x02;
 
+    uint32_t buttonPressed = 0x02;
     xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
@@ -136,60 +148,55 @@ static void IRAM_ATTR isr_signal_mode_handler(void *arg)
     }
 }
 
-/* 
- * Interrupt function handler for the RED BUTTON to toggle the red signal. It it a 
- * hardware interrupt which gets trigger when the RED BUTTON is pressed. It then sends 
- * a notification to the Button capture task.
-*/
+/** 
+ * @brief Interrupt function handler for the RED BUTTON to toggle the red signal. It it a 
+ *        hardware interrupt which gets trigger when the RED BUTTON is pressed. It then sends 
+ *        a notification to the Button capture task.
+ */
 static void IRAM_ATTR isr_red_button_handler(void *arg)
 {
     BaseType_t xHigherPriorityTaskWoken;
-
     xHigherPriorityTaskWoken = pdFALSE;
-    uint32_t buttonPressed = 0x10;
 
+    uint32_t buttonPressed = 0x10;
     xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
+
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
     }
 }
 
-/* 
- * Interrupt function handler for the GREEN BUTTON to toggle the green signal. It it a 
- * hardware interrupt which gets trigger when the GREEN BUTTON is pressed. It then sends 
- * a notification to the Button capture task.
-*/
+/** 
+ * @brief Interrupt function handler for the GREEN BUTTON to toggle the green signal. It it a 
+ *        hardware interrupt which gets trigger when the GREEN BUTTON is pressed. It then sends 
+ *        a notification to the Button capture task.
+ */
 static void IRAM_ATTR isr_green_button_handler(void *arg)
 {
-    // send taskNotification to button capture
-    // button caprture pointer to handler
     BaseType_t xHigherPriorityTaskWoken;
-
     xHigherPriorityTaskWoken = pdFALSE;
-    uint32_t buttonPressed = 0x20;
 
+    uint32_t buttonPressed = 0x20;
     xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
+
     if (xHigherPriorityTaskWoken)
     {
         portYIELD_FROM_ISR();
     }
 }
 
-/* 
- * Interrupt function handler for the BLUE BUTTON to toggle the blue signal. It it a 
- * hardware interrupt which gets trigger when the BLUE BUTTON is pressed. It then sends 
- * a notification to the Button capture task.
+/** 
+ * @brief Interrupt function handler for the BLUE BUTTON to toggle the blue signal. It it a 
+ *        hardware interrupt which gets trigger when the BLUE BUTTON is pressed. It then sends 
+ *        a notification to the Button capture task.
 */
 static void IRAM_ATTR isr_blue_button_handler(void *arg)
 {
-    // send taskNotification to button capture
-    // button caprture pointer to handler
     BaseType_t xHigherPriorityTaskWoken;
-
     xHigherPriorityTaskWoken = pdFALSE;
-    uint32_t buttonPressed = 0x40;
 
+    uint32_t buttonPressed = 0x40;
     xQueueSendFromISR(xButtonCaptureQueue, &buttonPressed, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken)
@@ -198,11 +205,9 @@ static void IRAM_ATTR isr_blue_button_handler(void *arg)
     }
 }
 
-/* 
- *
- * This function initializes the input and output gpio pins 
- *
-*/
+/**
+ * @brief: This function initializes the input and output gpio pins 
+ */
 void gpio_init(void)
 {
     gpio_config_t io_conf;
@@ -230,14 +235,15 @@ void gpio_init(void)
     gpio_config(&io_conf);
 }
 
-/*
- * This function initializes the LED controller. Here each output pwm signal 
- * comes form its own led channel as follows. 
- * Red signal -- channel 0
- * Greeb signal -- channel 1
- * Blue signal -- channel 2
- * Output frequency for all channels is 5 kHz
-*/
+/**
+ * @brief This function initializes the LED controller. Here each output pwm signal 
+ *        comes form its own led channel as follows. 
+ * 
+ * @b Red_signal --> Linked to channel 0
+ * @b Greeb_signal --> Linked to channel 1
+ * @b Blue_signal --> Linked to channel 2
+ * @p Output_frequency --> For all channels is 10 kHz
+ */
 void ledc_init(void)
 {
     // Prepare and then apply the LEDC PWM timer configuration
@@ -278,10 +284,9 @@ void ledc_init(void)
 /**
  * @brief Initialize selected timer of timer group
  *
- * @param group Timer Group number, index from 0
- * @param timer timer ID, index from 0
+ * @param group Timer Group number is 0
+ * @param timer timer ID, index is 0
  * @param auto_reload whether auto-reload on alarm event
- * @param timer_interval_sec interval of alarm
  */
 void timer_setUp(void)
 {
@@ -302,30 +307,25 @@ void timer_setUp(void)
     /* Configure the alarm value and the interrupt on alarm. */
     //timer_set_alarm_value(group, timer, timer_interval_sec * TIMER_SCALE);
     //timer_enable_intr(group, timer);
-
-    // example_timer_info_t *timer_info = calloc(1, sizeof(example_timer_info_t));
-    // timer_info->timer_group = group;
-    // timer_info->timer_idx = timer;
-    // timer_info->auto_reload = auto_reload;
-    // timer_info->alarm_interval = timer_interval_sec;
-    // timer_isr_callback_add(group, timer, timer_group_isr_callback, timer_info, 0);
 }
 
+/**
+ * @brief This task converts the analog input from the potentiometer to digital numbers. 
+ *        The function polls the input every half a sencond and checks for changes greater 
+ *        10 and updates the corresponding pwm signal as necessary. 
+ * 
+ * @b redValRed Holds the digital value read from the () pin analog input
+ * @b greenValRed Holds the digital value read from the () pin analog input
+ * @b blueValRed Holds the digital value read from the () pin analog input
+ */
 static void adc_pwm_task(void *arg)
 {
-    /* ADC configuration */
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_11db);
     int redValRed = 0;
     int greenValRed = 0;
     int blueValRed = 0;
-    int redCurr = 0;
-    int greenCurr = 0;
-    int blueCurr = 0;
+    int redCurr = LEDC_DUTY;
+    int greenCurr = LEDC_DUTY;
+    int blueCurr = LEDC_DUTY;
 
     for (;;)
     {
@@ -338,25 +338,35 @@ static void adc_pwm_task(void *arg)
 
         if (abs(redValRed - redCurr) > 10)
         {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, redValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
+            /* Update red_led pwm signal output */
+            printf("RedPWM: %d\n", abs(redValRed));
+            set_update_duty(LEDC_CHANNEL_0, redValRed);
             redCurr = redValRed;
-            printf("redPWM: %d\n", redCurr);
         }
+
         if (abs(greenValRed - greenCurr) > 10)
         {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, greenValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
+            /* Update green_led pwm signal output */
+            printf("GreenPWM: %d\n", abs(greenValRed));
+            set_update_duty(LEDC_CHANNEL_1, greenValRed);
             greenCurr = greenValRed;
         }
+
         if (abs(blueValRed - blueCurr) > 10)
         {
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, blueValRed));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
+            /* Update blue_led pwm signal output */
+            printf("BluePWM: %d\n", abs(blueValRed));
+            set_update_duty(LEDC_CHANNEL_2, blueValRed);
             blueCurr = blueValRed;
         }
         vTaskDelay(500 / portTICK_RATE_MS);
     }
+}
+
+void set_update_duty(ledc_channel_t led_channel, int value)
+{
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, led_channel, value));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, led_channel));
 }
 
 static void advance_frame_task(void *arg)
@@ -419,7 +429,10 @@ static void advance_frame_task(void *arg)
                     }
 
                     uint32_t interval_width = timer_val - last_timer_val; // interval from last confirmed time and most reason clock value
-                    printf("frame interval:  %d\n", interval_width);
+                    //printf("frame interval:  %d\n", interval_width);
+                    //printf("Timer value  %lld\n", timer_val);
+
+                    //printf("timer val:  %lld\n", timer_val);
 
                     if (interval_width >= (tg_interval_time - allowed_error) && interval_width <= (tg_interval_time + allowed_error))
                     {
@@ -438,6 +451,7 @@ static void advance_frame_task(void *arg)
                         error = interval_width - tg_interval_time;
                         last_timer_val = timer_val;
                         missed_intervals = 0;
+                        // printf("Error val:  %lld\n", error);
                     }
                     else if (interval_width < allowed_error)
                     {
@@ -464,7 +478,7 @@ static void advance_frame_task(void *arg)
                     else
                     {
                         noise_signal++;
-                        printf("[MESSAGE]: Noise signal:  %d \n", noise_signal);
+                        //printf("[MESSAGE]: Noise signal:  %d \n", noise_signal);
                     }
                 }
                 else if (ulInterruptStatus == 0x02)
@@ -530,7 +544,7 @@ static void multiMode_controller_task(void *arg)
                 * 0x20  -->  enable all LEDs and set activeLed = NO_SIGNAL
                 * 
                 * */
-                printf("recived message: %x\n", ledMessage);
+                //printf("recived message: %x\n", ledMessage);
                 if (ledMessage == 0x00)
                 {
                     if (activeLed != NO_SIGNAL)
@@ -863,7 +877,7 @@ void signal_mode_pressed(bool *singleMode)
             vTaskSuspend(xSingleModeTaskHandle);
             vTaskResume(xMultiModeTaskHandle);
             uint32_t startMultiMode = 0x20;
-            if (xQueueSend(xMultiModeControlQueue, &startMultiMode, (TickType_t)100))
+            if (!xQueueSend(xMultiModeControlQueue, &startMultiMode, (TickType_t)100))
             {
                 printf("Could not send message to queue: signal_mode_pressed \n");
             }
