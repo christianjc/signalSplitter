@@ -36,7 +36,6 @@ static void IRAM_ATTR isr_blue_button_handler(void *arg);
 /**
  * @brief Main app function for setup and initialization happens
  */
-
 void app_main(void)
 {
 
@@ -363,21 +362,40 @@ static void adc_pwm_task(void *arg)
     }
 }
 
+/**
+ * @brief This task converts the analog input from the potentiometer to digital numbers. 
+ *        The function polls the input every half a sencond and checks for changes greater 
+ *        10 and updates the corresponding pwm signal as necessary. 
+ * 
+ * @param led_channel LED channel to be updated. 
+ * @param value Digital number to update the duty cycle.
+ */
 void set_update_duty(ledc_channel_t led_channel, int value)
 {
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, led_channel, value));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, led_channel));
 }
 
+/**
+ * @brief This task converts the analog input from the potentiometer to digital numbers. 
+ *        The function polls the input every half a sencond and checks for changes greater 
+ *        10 and updates the corresponding pwm signal as necessary. 
+ * 
+ * @b current_frame Holds the value of the current active frame.
+ * @b missed_intervals Then number of missed invervals before the signal has to be resynchronize.
+ * @b timer_val Holds the timer value at which the current signal interrupt is triggered.
+ * @b last_timer_val Holds the timer value of the last signal interrupt.
+ * @b error Holds the error the signal interval.
+ * @b tg_interval_time Is the expected value for the signal interval set to @p 5555 cycles for a 1MHz clock to get 180Hz
+ * @b allowed_error This is the allowd error to trigger a change of frame, which is set to 10%
+ * @p ulInterruptStatus Holds the value of the mesage send through the queue with the follwing values:
+ *              @b PROJECTOR_SIGNAL         @c 0X01
+ *              @b ADVANCE_FRAME_BUTTON     @c 0x02
+ *              @b SUSPEND_QUEUE            @c 0x03
+ *              @b RESUME_QUEUE             @c 0x04
+ */
 static void advance_frame_task(void *arg)
 {
-    /* Reciving notifications:
-         * PROJECTOR SIGNAL:        SIGNAL_ISR = 0X01
-         * ADVANCE FRAME BUTTON:    ADV_FRAME = 0x02
-         * SUSPEND QUEUE:           SUSPEND_QUEUE = 0X03
-         * ENABLE QUEUE:            ENABLE_QUEUE = 0X04
-    */
-
     uint32_t ulInterruptStatus = 0x00;
     uint32_t current_frame = 0x03;
     uint32_t missed_intervals = SYNC_TRIGGER_SIZE;
@@ -385,9 +403,9 @@ static void advance_frame_task(void *arg)
 
     uint64_t timer_val = 0;
     uint64_t last_timer_val = 0;
-    int64_t error = 0;                                       // this variable will hold the error from the interupt
-    const uint64_t tg_interval_time = 5555;                  //100000            // set the frame with to 5,555 cycles for a 1MHz clock to get 180Hz
-    const uint64_t allowed_error = (tg_interval_time * 0.1); // set allowed error to 10%
+    int64_t error = 0;
+    const uint64_t tg_interval_time = 5555;
+    const uint64_t allowed_error = (tg_interval_time * 0.1);
 
     bool synchronized = false;
     bool timer_started = false;
@@ -397,7 +415,7 @@ static void advance_frame_task(void *arg)
     {
         if (xAdvanceFrameQueue != NULL)
         {
-            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, (TickType_t)100)) // wait for 100 ticks then stop timer and unsync signal
+            if (xQueueReceive(xAdvanceFrameQueue, &ulInterruptStatus, (TickType_t)100)) // wait for 100 ticks before stopping the timer
             {
                 if (ulInterruptStatus == 0x01)
                 {
@@ -436,10 +454,9 @@ static void advance_frame_task(void *arg)
 
                     if (interval_width >= (tg_interval_time - allowed_error) && interval_width <= (tg_interval_time + allowed_error))
                     {
-                        /* If the interval with is with in the expected error, 
-                        we update the frame and notify the led controller */
+                        /* If the interval with is with in the expected error, we update the frame and notify the led controller 
+                            The frame is only updated once per interval */
 
-                        /* we only update the fram and notify the led controller onece */
                         current_frame++;
                         current_frame = current_frame % 3;
 
@@ -455,17 +472,17 @@ static void advance_frame_task(void *arg)
                     }
                     else if (interval_width < allowed_error)
                     {
-                        // check if error improves if we reconsider an new interval and update last_timer_val
+                        /* Check if the current signal is better and update the las timer value, if it does */
                         if (abs(error + interval_width) < abs(error))
                         {
                             error = error + interval_width;
                             last_timer_val = timer_val;
                         }
-                        noise_signal++; // Keep track of noise signal for teat purposes
+                        noise_signal++; // Keep track of noise signal for test purposes
                     }
                     else if (interval_width > (tg_interval_time + allowed_error))
                     {
-                        // if the we are out of sync missed intervals will grow and set synchronized to false
+                        /* if the we are out of sync missed intervals will grow and set synchronized to false */
                         missed_intervals += (interval_width / tg_interval_time);
                         interval_width = interval_width % tg_interval_time;
                         last_timer_val = timer_val - interval_width;
@@ -483,7 +500,7 @@ static void advance_frame_task(void *arg)
                 }
                 else if (ulInterruptStatus == 0x02)
                 {
-                    // advance frame from button press
+                    /* advance frame from button press */
                     current_frame++;
                     current_frame = current_frame % 3;
                     if (!suspendQueue)
@@ -744,7 +761,7 @@ void led_off(out_sig signal)
     }
     else if (signal == GREEN_SIGNAL)
     {
-        // turn on green lingght
+        // turn on green light
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, false);
         ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
         //gpio_set_level(GPIO_OUTPUT_GREEN_PWM, 0);
