@@ -36,7 +36,7 @@
 #define TIMER_DIVIDER (80)     //  Hardware timer clock divider
 #define SYNC_TRIGGER_SIZE (10) // Sample size to sync signal
 
-// Constants
+// enumerators
 typedef enum
 {
     RED_SIGNAL = 0x00,
@@ -47,8 +47,6 @@ typedef enum
 void led_on(out_sig);
 void led_off(out_sig);
 void all_leds_off();
-// void green_led_on(void);
-// void blue_led_on(void);
 
 void ledc_init(void);
 void gpio_init(void);
