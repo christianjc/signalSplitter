@@ -311,7 +311,7 @@ void timer_setUp(void)
 /**
  * @brief This task converts the analog input from the potentiometer to digital numbers. 
  *        The function polls the input every half a sencond and checks for changes greater 
- *        10 and updates the corresponding pwm signal as necessary. 
+ *        10 and updates the corresponding duty cycle for the led controller signal as necessary. 
  * 
  * @b redValRed Holds the digital value read from the () pin analog input
  * @b greenValRed Holds the digital value read from the () pin analog input
@@ -338,7 +338,7 @@ static void adc_pwm_task(void *arg)
         if (abs(redValRed - redCurr) > 10)
         {
             /* Update red_led pwm signal output */
-            printf("RedPWM: %d\n", abs(redValRed));
+            //printf("RedPWM: %d\n", abs(redValRed));
             set_update_duty(LEDC_CHANNEL_0, redValRed);
             redCurr = redValRed;
         }
@@ -346,7 +346,7 @@ static void adc_pwm_task(void *arg)
         if (abs(greenValRed - greenCurr) > 10)
         {
             /* Update green_led pwm signal output */
-            printf("GreenPWM: %d\n", abs(greenValRed));
+            //printf("GreenPWM: %d\n", abs(greenValRed));
             set_update_duty(LEDC_CHANNEL_1, greenValRed);
             greenCurr = greenValRed;
         }
@@ -354,7 +354,7 @@ static void adc_pwm_task(void *arg)
         if (abs(blueValRed - blueCurr) > 10)
         {
             /* Update blue_led pwm signal output */
-            printf("BluePWM: %d\n", abs(blueValRed));
+            //printf("BluePWM: %d\n", abs(blueValRed));
             set_update_duty(LEDC_CHANNEL_2, blueValRed);
             blueCurr = blueValRed;
         }
@@ -423,7 +423,7 @@ static void advance_frame_task(void *arg)
                     if (!timer_started)
                     {
                         timer_start(TIMER_GROUP_0, TIMER_0);
-                        printf("*** timer started ***\n");
+                        //printf("*** timer started ***\n");
                         timer_started = true;
                     }
 
@@ -527,13 +527,29 @@ static void advance_frame_task(void *arg)
                 {
                     timer_pause(TIMER_GROUP_0, TIMER_0);
                     timer_started = false;
-                    printf("*** timer has stoped ***\n");
+                    //printf("*** timer has stoped ***\n");
                 }
             }
         }
     }
 }
 
+/**
+ * @brief The main function of this task is to control the multi mode led output signal.
+ *        It recives messages from advance_frame_task and button_capture_task in order to 
+ *        turn on and off the corresponding signals and to activate or deactivate a signal.
+ * 
+ * @b activeLed Holds the value of the frame that is currently on. 
+ * @b {COLOR}LedDis If value is true, the corresponding color value is disable and output will alaws ben low.
+ * @p ledMessage Holds the message value recived from other task as follows:
+ *              @b RED_LED_ON           @c 0x00
+ *              @b GREEN_LED_ON         @c 0x01
+ *              @b BLEU_LED_ON          @c 0x02
+ *              @b RED_EN_DIS           @c 0x10
+ *              @b GREEN_EN_DIS         @c 0x11
+ *              @b BLUE_EN_DIS          @c 0x12
+ *              @b START_MULTI_MODE     @c 0x20
+ */
 static void multiMode_controller_task(void *arg)
 {
     uint32_t ledMessage = 0x0;
@@ -548,19 +564,6 @@ static void multiMode_controller_task(void *arg)
         {
             if (xQueueReceive(xMultiModeControlQueue, &ledMessage, portMAX_DELAY))
             {
-                /*
-                * ledMessage:
-                * 0x00  -->  Red led on
-                * 0x01  -->  Green led on
-                * 0x02  -->  Blue led on
-                *
-                * 0x10  -->  Red led enable/disable
-                * 0x11  -->  Green led enable/disable
-                * 0x12  -->  Blue led enable/disable
-                * 
-                * 0x20  -->  enable all LEDs and set activeLed = NO_SIGNAL
-                * 
-                * */
                 //printf("recived message: %x\n", ledMessage);
                 if (ledMessage == 0x00)
                 {
@@ -662,6 +665,19 @@ static void multiMode_controller_task(void *arg)
     }
 }
 
+/**
+ * @brief The main function of this task is to operate the signal in single mode. This only involves 
+ *        only one led output signal. The user chooses from three different outputs. This will produce
+ *        a single ouput from one of the output signals with frequency @c LED_FREQUENCY
+ * 
+ * @b activeLed Holds the value of the active led currently on.
+ * @p ledMessage Holds the message value recived from other task as follows:
+ *              @b RED_LED_ON           @c 0x00
+ *              @b GREEN_LED_ON         @c 0x01
+ *              @b BLEU_LED_ON          @c 0x02
+ *              @b START_SINGLE_MODE    @c 0x03
+ *        
+*/
 static void singleMode_controller_task(void *arg)
 {
     uint32_t ledMessage = 0x00;
@@ -673,15 +689,6 @@ static void singleMode_controller_task(void *arg)
         {
             if (xQueueReceive(xSingleModeControlQueue, &ledMessage, portMAX_DELAY))
             {
-                /*
-                * ledMessage:
-                * 0x00  -->  Red led on
-                * 0x01  -->  Green led on
-                * 0x02  -->  Blue led on
-                * 
-                * 0x03  -->  Enter Single mode: restart to red led
-                *
-                * */
                 if (ledMessage == 0x00 && activeLed != RED_SIGNAL)
                 {
                     led_off(activeLed);
@@ -715,12 +722,16 @@ static void singleMode_controller_task(void *arg)
     }
 }
 
-// TODO: this function needs to be modify to ensure the pins that are off are not floting and set to low
+/**
+ * @brief It turns on the specified led ouput signal.
+ * 
+ * @param signal The desired signal to be turned on.
+*/
 void led_on(out_sig signal)
 {
     if (signal == RED_SIGNAL)
     {
-        // do this
+        // turn on red light
         //printf("in led_on RED\n");
         gpio_hold_dis(GPIO_OUTPUT_RED_PWM);
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_0, true);
@@ -728,8 +739,7 @@ void led_on(out_sig signal)
     }
     else if (signal == GREEN_SIGNAL)
     {
-        // turn on green lingght
-
+        // turn on green light
         gpio_hold_dis(GPIO_OUTPUT_GREEN_PWM);
         ledc_ll_set_sig_out_en(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1, true);
         ledc_ll_ls_channel_update(LEDC_LL_GET_HW(), LEDC_MODE, LEDC_CHANNEL_1);
@@ -744,11 +754,16 @@ void led_on(out_sig signal)
     }
     else
     {
-        //printf("There was an error in LED_ON  value: %x \n", signal);
+        printf("There was an error in LED_ON  value: %x \n", signal);
     }
     //printf("\nOn -red before register %x\n", REG_READ(LEDC_LSCH0_CONF0_REG));
 }
 
+/**
+ * @brief It turns off the specified led ouput signal.
+ * 
+ * @param signal The desired signal to be turned off.
+*/
 void led_off(out_sig signal)
 {
     if (signal == RED_SIGNAL)
@@ -782,7 +797,9 @@ void led_off(out_sig signal)
     //printf("\nOn -red before register %x\n", REG_READ(LEDC_LSCH0_CONF0_REG));
 }
 
-/* Turn all led off. This should happen every 180Hz ***/
+/**
+ * @brief It turns off all the led ouput signals.
+*/
 void all_leds_off(void)
 {
     led_off(RED_SIGNAL);
@@ -790,7 +807,18 @@ void all_leds_off(void)
     led_off(BLUE_SIGNAL);
 }
 
-/* TODO: Write a description of the function */
+/**
+ * @brief This task captures all the button functionos of the device and sends a
+ *        messages to the corresponding task function to process the request.
+ * 
+ * @b singleMode Holds wether the system is in single or multi mode
+ * @p ulInterButtonStatus It holds the message sent from the corresponding button interrupt as follows:
+ *              @b ADVANCE_FRAME_BTN        @p 0x01
+ *              @b SINGLE_MULTI_MODE_BTN    @p 0x02
+ *              @b RED_BTN                  @p 0x10
+ *              @b GREE_BTN                 @p 0x20
+ *              @b BLUE_BTN                 @p 0x40
+*/
 void button_capture_task(void *arg)
 {
     uint32_t ulInterButtonStatus = 0x00;
@@ -806,15 +834,6 @@ void button_capture_task(void *arg)
         {
             if (xQueueReceive(xButtonCaptureQueue, &ulInterButtonStatus, portMAX_DELAY))
             {
-                /*
-                 * ulInterButtonStatus:
-                 * 0x01  --> BUTTON (advance frame) for isr_advance_frame_handler 
-                 * 0x02  --> BUTTON (single/multi mode) for isr_single_mode_handler
-                 * 0x10  --> BUTTON (red button) for isr_red_button_handler
-                 * 0x20  --> BUTTON (green button) for isr_green_button_handler
-                 * 0x40  --> BUTTON (blue button) for isr_blue_button_handler
-                */
-
                 //printf("\nButton Capture Function: \n");
                 if (ulInterButtonStatus == 0x01)
                 {
@@ -844,13 +863,19 @@ void button_capture_task(void *arg)
     }
 }
 
+/**
+ * @brief Helper function for when advancde frame button is pressed. It mainly decideds when to send
+ *        a messaga to advance frame task.
+ * 
+ * @param singleMode Is a pointer to the system state, which is single or multi mode.
+*/
 void advance_frame_pressed(bool *singleMode)
 {
     gpio_intr_disable(GPIO_INPUT_ADVANCE_FRAME);
     uint32_t msg = 0x02;
     if (!(*singleMode))
     {
-        printf("************ advance frame **********\n");
+        //printf("************ advance frame **********\n");
         if (xAdvanceFrameQueue != NULL)
         {
             xQueueSend(xAdvanceFrameQueue, &msg, (TickType_t)10);
@@ -861,6 +886,13 @@ void advance_frame_pressed(bool *singleMode)
     gpio_intr_enable(GPIO_INPUT_ADVANCE_FRAME);
 }
 
+/**
+ * @brief Helper function for when signal mode button is pressed. I helps switch from single and multi mode
+ *        and updates the singleMode variable accordingly. It also suspends and resums the single and multi mode task
+ *        functions.
+ * 
+ * @param singleMode Holds the state of the system, which is single or multi mode.
+*/
 void signal_mode_pressed(bool *singleMode)
 {
     gpio_intr_disable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
@@ -906,24 +938,30 @@ void signal_mode_pressed(bool *singleMode)
         }
     }
 
-    vTaskDelay(500 / portTICK_RATE_MS);
+    vTaskDelay(300 / portTICK_RATE_MS);
     gpio_intr_enable(GPIO_INPUT_MULTI_SINGLE_TOGGLE);
 }
 
+/**
+ * @brief This function is activated when the red button is pressed. It sends a message to the fucntion task 
+ *        corresponding to the system curren output mode (single/multi mode).
+ * 
+ * @b singleMode Holds the state of the system, which is single or multi mode.     
+*/
 void red_button_pressed(bool *singleMode)
 {
     gpio_intr_disable(GPIO_INPUT_RED_BUTTON);
 
     if (*singleMode)
     {
-        printf("**************red pressed SINGLE MODE\n");
+        //printf("**************red pressed SINGLE MODE\n");
         // send message to single_mode_task
         uint32_t activateLED = 0x00;
         xQueueSend(xSingleModeControlQueue, &activateLED, (TickType_t)10);
     }
     else
     {
-        printf("**************red pressed MULTI_MODE\n");
+        //printf("**************red pressed MULTI_MODE\n");
         uint32_t enableDisable = 0x10;
         xQueueSend(xMultiModeControlQueue, &enableDisable, (TickType_t)10);
     }
@@ -931,20 +969,26 @@ void red_button_pressed(bool *singleMode)
     gpio_intr_enable(GPIO_INPUT_RED_BUTTON);
 }
 
+/**
+ * @brief This function is activated when the red button is pressed. It sends a message to the fucntion task 
+ *        corresponding to the system curren output mode (single/multi mode).
+ * 
+ * @b singleMode Holds the state of the system, which is single or multi mode.     
+*/
 void green_button_pressed(bool *singleMode)
 {
     gpio_intr_disable(GPIO_INPUT_GREEN_BUTTON);
 
     if (*singleMode)
     {
-        printf("*****************green pressed SINGLE MODE\n");
+        //printf("*****************green pressed SINGLE MODE\n");
         // send message to single_mode_task
         uint32_t activateLED = 0x01;
         xQueueSend(xSingleModeControlQueue, &activateLED, (TickType_t)10);
     }
     else
     {
-        printf("*******************GREEN pressed MULTI_MODE\n");
+        //printf("*******************GREEN pressed MULTI_MODE\n");
         uint32_t enableDisable = 0x11;
         xQueueSend(xMultiModeControlQueue, &enableDisable, (TickType_t)10);
     }
@@ -952,20 +996,26 @@ void green_button_pressed(bool *singleMode)
     gpio_intr_enable(GPIO_INPUT_GREEN_BUTTON);
 }
 
+/**
+ * @brief This function is activated when the red button is pressed. It sends a message to the fucntion task 
+ *        corresponding to the system curren output mode (single/multi mode).
+ * 
+ * @b singleMode Holds the state of the system, which is single or multi mode.     
+*/
 void blue_button_pressed(bool *singleMode)
 {
 
     gpio_intr_disable(GPIO_INPUT_BLUE_BUTTON);
     if (*singleMode)
     {
-        printf("******************blue pressed SINGLE MODE\n");
+        //printf("******************blue pressed SINGLE MODE\n");
         // send message to single_mode_task
         uint32_t activateLED = 0x02;
         xQueueSend(xSingleModeControlQueue, &activateLED, (TickType_t)10);
     }
     else
     {
-        printf("*******************BLUE pressed MULTI_MODE\n");
+        //printf("*******************BLUE pressed MULTI_MODE\n");
         uint32_t enableDisable = 0x12;
         xQueueSend(xMultiModeControlQueue, &enableDisable, (TickType_t)10);
     }
