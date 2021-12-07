@@ -439,6 +439,7 @@ static void advance_frame_task(void *arg)
                         missed_intervals = 0;
                         error = tg_interval_time;
                         synchronized = true;
+                        //printf("Synch current frame: %d\n", current_frame);
                         if (!suspendQueue)
                         {
                             xQueueSend(xMultiModeControlQueue, &current_frame, (TickType_t)10);
@@ -456,6 +457,11 @@ static void advance_frame_task(void *arg)
                     {
                         /* If the interval with is with in the expected error, we update the frame and notify the led controller 
                             The frame is only updated once per interval */
+
+                        if (missed_intervals == 1)
+                        {
+                            current_frame++;
+                        }
 
                         current_frame++;
                         current_frame = current_frame % 3;
@@ -483,6 +489,7 @@ static void advance_frame_task(void *arg)
                     else if (interval_width > (tg_interval_time + allowed_error))
                     {
                         /* if the we are out of sync missed intervals will grow and set synchronized to false */
+
                         missed_intervals += (interval_width / tg_interval_time);
                         interval_width = interval_width % tg_interval_time;
                         last_timer_val = timer_val - interval_width;
@@ -491,11 +498,14 @@ static void advance_frame_task(void *arg)
                             missed_intervals++;
                             synchronized = false;
                         }
+                        //printf("missed iterval:  %d\n", missed_intervals);
+                        //printf("Current frame:  %d\n", current_frame);
                     }
                     else
                     {
                         noise_signal++;
                         //printf("[MESSAGE]: Noise signal:  %d \n", noise_signal);
+                        //printf("frame interval:  %d\n", interval_width);
                     }
                 }
                 else if (ulInterruptStatus == 0x02)
@@ -567,6 +577,12 @@ static void multiMode_controller_task(void *arg)
                 //printf("recived message: %x\n", ledMessage);
                 if (ledMessage == 0x00)
                 {
+                    // // TESTING
+                    // if (activeLed != BLUE_SIGNAL)
+                    // {
+                    //     printf("*****************Frame BLUE skipped");
+                    // }
+                    // // END TESTING
                     if (activeLed != NO_SIGNAL)
                     {
                         if (!redLedDis)
@@ -592,6 +608,10 @@ static void multiMode_controller_task(void *arg)
                 }
                 else if (ledMessage == 0x01)
                 {
+                    // if (activeLed != RED_SIGNAL)
+                    // {
+                    //     printf("*****************Frame RED skipped");
+                    // }
                     if (activeLed != NO_SIGNAL)
                     {
                         if (!greenLedDis)
@@ -617,6 +637,10 @@ static void multiMode_controller_task(void *arg)
                 }
                 else if (ledMessage == 0x02)
                 {
+                    // if (activeLed != GREEN_SIGNAL)
+                    // {
+                    //     printf("*****************Frame GREEN skipped");
+                    // }
                     if (activeLed != NO_SIGNAL)
                     {
                         if (!blueLedDis)

@@ -28,9 +28,9 @@
 // LED Controller parameters
 #define LEDC_TIMER LEDC_TIMER_0         // Timer
 #define LEDC_MODE LEDC_LOW_SPEED_MODE   // Speed mode
-#define LEDC_DUTY_RES LEDC_TIMER_12_BIT // Set duty resolution to 12 bits
-#define LEDC_DUTY (2048)                // Set duty to 50%. ((2 ** 12) - 1) * 50% = 2048
-#define LEDC_FREQUENCY (10000)          // Frequency in Hertz. Set frequency at 5 kHz
+#define LEDC_DUTY_RES LEDC_TIMER_11_BIT // Set duty resolution to 12 bits
+#define LEDC_DUTY (1024)                // Set duty to 50%. ((2 ** 12) - 1) * 50% = 2048
+#define LEDC_FREQUENCY (30000)          // Frequency in Hertz. Set frequency at 5 kHz
 
 // Timer parameters
 #define TIMER_DIVIDER (80)     //  Hardware timer clock divider
