@@ -76,11 +76,11 @@ void app_main(void)
     timer_setUp();
 
     /* ADC configuration */
-    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_width(ADC_WIDTH_BIT_11);
     adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_width(ADC_WIDTH_BIT_11);
     adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_11db);
-    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_width(ADC_WIDTH_BIT_11);
     adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_11db);
 
     /* Create application tasks */
